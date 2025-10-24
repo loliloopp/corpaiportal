@@ -13,10 +13,21 @@ interface DeepSeekRequest {
   max_tokens?: number;
 }
 
+interface DeepSeekUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface AIProviderResponse {
+  content: string;
+  usage: DeepSeekUsage;
+}
+
 export const sendDeepSeekRequest = async (
   model: string,
   messages: DeepSeekMessage[]
-): Promise<string> => {
+): Promise<AIProviderResponse> => {
   if (!DEEPSEEK_API_KEY) {
     throw new Error('DEEPSEEK_API_KEY не установлен');
   }
@@ -44,7 +55,10 @@ export const sendDeepSeekRequest = async (
     }
 
     const data = await response.json();
-    return data.choices[0].message.content;
+    return {
+      content: data.choices[0].message.content,
+      usage: data.usage,
+    };
   } catch (error) {
     console.error('Error calling DeepSeek API:', error);
     throw error;

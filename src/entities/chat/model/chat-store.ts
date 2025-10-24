@@ -2,7 +2,11 @@ import { create } from 'zustand';
 import { Message } from './types';
 import { getConversations, getMessages, createConversation, saveMessage } from '../api/chat-api';
 import { useAuthStore } from '@/features/auth';
-import { sendDeepSeekRequest } from '@/shared/api/deepseek-api';
+import { sendDeepSeekRequest, AIProviderResponse } from '@/shared/api/deepseek-api';
+import { sendOpenAIRequest } from '@/shared/api/openai-api';
+import { sendGeminiRequest } from '@/shared/api/gemini-api';
+import { logUsage, useLimitsStore } from '@/entities/limits';
+import { MODELS } from '@/shared/config/models.config';
 
 type Conversation = {
     id: string;
@@ -57,10 +61,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ selectedModel: model });
   },
   sendMessage: async (content: string) => {
-    const { activeConversation, selectedModel } = get();
+    const { activeConversation, selectedModel, messages } = get();
     const { user } = useAuthStore.getState();
+    const { checkLimits, fetchUsage } = useLimitsStore.getState();
 
     if (!user) return;
+
+    const { canMakeRequest, reason } = checkLimits();
+    if (!canMakeRequest) {
+      // TODO: Replace with a proper notification component
+      alert(reason);
+      return;
+    }
 
     let conversationId = activeConversation;
 
@@ -81,6 +93,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       user_id: user.id,
       role: 'user' as const,
       content: content,
+      model: selectedModel,
     };
 
     const savedUserMessage = await saveMessage(userMessage);
@@ -88,27 +101,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ loading: true });
 
     try {
-      // Prepare conversation history for DeepSeek
-      const currentMessages = get().messages;
-      const conversationHistory = currentMessages.map((msg) => ({
-        role: msg.role === 'user' ? 'user' : 'assistant',
+      const conversationHistory = [...messages, savedUserMessage].map((msg) => ({
+        role: msg.role,
         content: msg.content,
       }));
 
-      // Add the new user message
-      conversationHistory.push({
-        role: 'user',
-        content: content,
+      const model = MODELS.find(m => m.id === selectedModel);
+      if (!model) throw new Error('Selected model not found');
+
+      let aiResponse: AIProviderResponse;
+
+      switch(model.provider) {
+        case 'openai':
+          aiResponse = await sendOpenAIRequest(selectedModel, conversationHistory as any);
+          break;
+        case 'gemini':
+          aiResponse = await sendGeminiRequest(selectedModel, conversationHistory as any);
+          break;
+        case 'deepseek':
+        default:
+          aiResponse = await sendDeepSeekRequest(selectedModel, conversationHistory as any);
+          break;
+      }
+
+      await logUsage({
+        user_id: user.id,
+        conversation_id: conversationId,
+        model: selectedModel,
+        prompt_tokens: aiResponse.usage.prompt_tokens,
+        completion_tokens: aiResponse.usage.completion_tokens,
+        total_tokens: aiResponse.usage.total_tokens,
+        status: 'success',
       });
 
-      // Call DeepSeek API
-      const aiResponseContent = await sendDeepSeekRequest(selectedModel, conversationHistory);
+      // Refresh usage stats
+      await fetchUsage(user.id);
 
       const aiMessage = {
         conversation_id: conversationId!,
         user_id: user.id,
         role: 'assistant' as const,
-        content: aiResponseContent,
+        content: aiResponse.content,
+        model: selectedModel,
       };
 
       const savedAiMessage = await saveMessage(aiMessage);
@@ -118,6 +152,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
     } catch (error) {
       console.error('Error getting AI response:', error);
+      await logUsage({
+        user_id: user.id,
+        conversation_id: conversationId,
+        model: selectedModel,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        status: 'error',
+      });
+      await fetchUsage(user.id);
       set({ loading: false });
     }
   },

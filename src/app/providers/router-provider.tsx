@@ -7,6 +7,7 @@ import { Spin } from 'antd';
 import { MainLayout } from '@/layout/main-layout';
 import ChatPage from '@/pages/chat';
 import SettingsPage from '@/pages/settings';
+import DashboardPage from '@/pages/dashboard';
 
 const PublicRoutes = () => {
   const { session, loading } = useAuthStore();
@@ -27,6 +28,7 @@ export const AppRouter = () => {
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/chat/:conversationId" element={<ChatPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
         </Route>
       </Route>
     </Routes>

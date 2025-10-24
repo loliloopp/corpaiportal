@@ -8,8 +8,141 @@ export type Json =
 
 export interface Database {
   public: {
-    Tables: Record<string, never>
-    Views: Record<string, never>
-    Functions: Record<string, never>
+    Tables: {
+      conversations: {
+        Row: {
+          id: string
+          user_id: string
+          title: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          title: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          title?: string
+          created_at?: string
+        }
+      }
+      messages: {
+        Row: {
+          id: string
+          conversation_id: string
+          user_id: string
+          role: "user" | "assistant"
+          content: string
+          model: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          conversation_id: string
+          user_id: string
+          role: "user" | "assistant"
+          content: string
+          model?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          conversation_id?: string
+          user_id?: string
+          role?: "user" | "assistant"
+          content?: string
+          model?: string | null
+          created_at?: string
+        }
+      }
+      user_profiles: {
+        Row: {
+          id: string
+          email: string | null
+          daily_request_limit: number
+          daily_request_limit_enabled: boolean
+          monthly_request_limit: number
+          monthly_request_limit_enabled: boolean
+          daily_token_limit: number
+          daily_token_limit_enabled: boolean
+          monthly_token_limit: number
+          monthly_token_limit_enabled: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          email?: string | null
+          daily_request_limit?: number
+          daily_request_limit_enabled?: boolean
+          monthly_request_limit?: number
+          monthly_request_limit_enabled?: boolean
+          daily_token_limit?: number
+          daily_token_limit_enabled?: boolean
+          monthly_token_limit?: number
+          monthly_token_limit_enabled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          email?: string | null
+          daily_request_limit?: number
+          daily_request_limit_enabled?: boolean
+          monthly_request_limit?: number
+          monthly_request_limit_enabled?: boolean
+          daily_token_limit?: number
+          daily_token_limit_enabled?: boolean
+          monthly_token_limit?: number
+          monthly_token_limit_enabled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      usage_logs: {
+        Row: {
+          id: string
+          user_id: string
+          conversation_id: string | null
+          model: string | null
+          prompt_tokens: number | null
+          completion_tokens: number | null
+          total_tokens: number | null
+          status: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          conversation_id?: string | null
+          model?: string | null
+          prompt_tokens?: number | null
+          completion_tokens?: number | null
+          total_tokens?: number | null
+          status?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          conversation_id?: string | null
+          model?: string | null
+          prompt_tokens?: number | null
+          completion_tokens?: number | null
+          total_tokens?: number | null
+          status?: string | null
+          created_at?: string
+        }
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      [_ in never]: never
+    }
   }
 }

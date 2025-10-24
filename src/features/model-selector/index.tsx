@@ -1,4 +1,5 @@
 import { Select } from 'antd';
+import { MODELS } from '@/shared/config/models.config';
 
 interface ModelSelectorProps {
   value: string;
@@ -6,16 +7,16 @@ interface ModelSelectorProps {
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({ value, onChange }) => {
-  const models = [
-    { value: 'deepseek-chat', label: 'DeepSeek Chat' },
-    { value: 'deepseek-coder', label: 'DeepSeek Coder' },
-  ];
+  const modelOptions = MODELS.map(model => ({
+    value: model.id,
+    label: model.name,
+  }));
 
   return (
     <Select
       value={value}
       onChange={onChange}
-      options={models}
+      options={modelOptions}
       style={{ minWidth: 180 }}
     />
   );

@@ -50,6 +50,7 @@ export const saveMessage = async (message: {
     user_id: string;
     role: 'user' | 'assistant';
     content: string;
+    model?: string;
 }) => {
     const { data, error } = await supabase
         .from('messages')
