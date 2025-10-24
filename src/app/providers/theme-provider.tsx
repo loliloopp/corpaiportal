@@ -94,10 +94,10 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
         colorBgElevated: isDark ? '#4a4a4a' : '#ffffff',
       },
       Select: {
-        optionSelectedBg: isDark ? '#555555' : '#f0f0f0',
+        optionSelectedBg: isDark ? '#858585' : '#f0f0f0',
         optionSelectedFontWeight: 400,
         optionLineHeightWithLongText: 1.5,
-        optionHoverBg: isDark ? '#4a4a4a' : '#f0f0f0',
+        optionHoverBg: isDark ? '#858585' : '#f0f0f0',
         selectorBg: isDark ? '#4a4a4a' : '#ffffff',
       },
       Input: {
