@@ -1,0 +1,73 @@
+## Project Description
+Корпоративный AI-портал для сотрудников с контролем доступа, лимитами и статистикой.
+- **Цель**: Предоставить сотрудникам доступ к AI моделям с контролем использования и стоимости
+- **Ключевые функции**: 
+  - Гибкая система лимитов (дневные/месячные по запросам/токенам)
+  - Групповое управление доступом к моделям
+  - Полная статистика и аналитика использования
+  - Управление через корпоративные API ключи
+  - Детальная визуализация данных
+
+## Architecture
+- **Frontend**: React 18.3, TypeScript 5.8+ (strict mode), Vite 7.0
+- **UI Library**: Ant Design 5.20+ + Recharts 2.12+ для графиков
+- **Backend**: Node.js + Express прокси с middleware
+- **Database**: Supabase с полной TypeScript типизацией
+- **Security**: Supabase Auth + JWT (без RLS - безопасность через прокси)
+- **AI Providers**: OpenAI, Gemini, DeepSeek через корпоративные API ключи
+- **Deployment**: Docker Compose для всех сервисов
+
+## Code Style
+- Строгий TypeScript для всех компонентов
+- Functional React components с хуками
+- Async/await для асинхронных операций
+- ESLint + Prettier для качества кода
+- **Максимальный размер файла: 400 строк** - разделять большие файлы
+
+## Key Principles
+- Единый стек TypeScript
+- Type-safe операции с Supabase
+- **VITE_SUPABASE_service_role_key ТОЛЬКО на сервере**, никогда в клиенте
+- **VITE_SUPABASE_ANON_KEY для клиентских операций**
+- Безопасность через прокси, НЕ через Row Level Security (RLS)
+- Все сообщения в чате (вопросы и ответы) на русском языке
+- **Environment Variables**: ТОЛЬКО `.env.local` файлы
+- **Стиль общения**: Писать только по делу, без лишних слов.
+
+## Plan Mode Requirements
+**ВАЖНО**: В режиме плана предоставлять ТОЛЬКО алгоритмы без примеров кода:
+- Текстовые описания шагов алгоритма
+- Названия таблиц БД и их связи
+- Логические схемы в текстовом формате
+- Архитектурные решения в виде текста
+
+## Feature-Sliced Design (FSD) Structure
+
+## Feature-Sliced Design (FSD) Structure
+```
+src/
+├── app/          # App-level providers, routing
+├── pages/        # Route pages (main pages, admin/, documents/, references/)
+├── widgets/      # Complex reusable UI blocks
+├── features/     # User interactions, business features (auth/)
+├── entities/     # Business entities and their APIs
+├── shared/       # Shared utilities, UI components, types (lib/, types/, ui/)
+├── layout/       # Layout components
+├── lib/          # External library configurations (supabase.ts)
+└── components/   # Legacy UI components
+
+## Key Patterns
+- **Public API**: Each slice exposes through `index.ts`
+- **Imports**: Use path aliases:
+  - `@/` → `./src`
+  - `@/app/` → `./src/app`
+  - `@/pages/` → `./src/pages`
+  - `@/widgets/` → `./src/widgets`
+  - `@/features/` → `./src/features`
+  - `@/entities/` → `./src/entities`
+  - `@/shared/` → `./src/shared`
+- **State**: TanStack Query for server state, Zustand for auth state only
+- **API Files**: Named as `entity-name-api.ts` in `entities/*/api/`
+- **Error Handling**: All Supabase queries must include error handling
+
+## File Structure
