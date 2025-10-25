@@ -1,3 +1,3 @@
-export * from './api/limits-api';
-export * from './model/limits-store';
-export * from './model/types';
+export { useLimitsStore } from './model/limits-store';
+export { logUsage } from './api/limits-api';
+export type { LogData } from './model/types';

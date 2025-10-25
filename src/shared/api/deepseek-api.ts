@@ -1,3 +1,5 @@
+import { checkUsageLimit } from "./usage-api";
+
 const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY;
 const DEEPSEEK_BASE_URL = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
 
@@ -31,6 +33,8 @@ export const sendDeepSeekRequest = async (
   if (!DEEPSEEK_API_KEY) {
     throw new Error('DEEPSEEK_API_KEY не установлен');
   }
+
+  await checkUsageLimit();
 
   const requestBody: DeepSeekRequest = {
     model,

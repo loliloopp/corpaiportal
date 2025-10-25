@@ -1,4 +1,5 @@
 import { AIProviderResponse } from "./deepseek-api"; // We'll centralize this later
+import { checkUsageLimit } from "./usage-api";
 
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 
@@ -21,6 +22,8 @@ export const sendOpenAIRequest = async (
   if (!OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY не установлен');
   }
+
+  await checkUsageLimit();
 
   const requestBody: OpenAIRequest = {
     model,

@@ -1,94 +1,197 @@
-import React, { useEffect, useState } from 'react';
-import { Card, Col, Row, Statistic, Table, Typography } from 'antd';
-import { useLimitsStore } from '@/entities/limits';
-import { supabase } from '@/shared/lib/supabase';
-import { useAuthStore } from '@/features/auth';
-import { Link } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Tabs, Select, Typography, Row, Col, Statistic, Card, Spin, Table } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { getGeneralStats, getModelUsageStats, getUserStats, getAllUsersForStats, getUserMessageHistory } from '@/entities/statistics/api/statistics-api';
+import { useThemeContext } from '@/app/providers/theme-provider';
 
 const { Title } = Typography;
+const { TabPane } = Tabs;
 
-const DashboardPage: React.FC = () => {
-    const { profile, dailyUsage, monthlyUsage, fetchUsage } = useLimitsStore();
-    const { user } = useAuthStore();
-    const [logs, setLogs] = useState<any[]>([]);
-    const [loadingLogs, setLoadingLogs] = useState(true);
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
-    useEffect(() => {
-        if (user) {
-            fetchUsage(user.id);
-            supabase
-                .from('usage_logs')
-                .select('*, conversations(title)')
-                .eq('user_id', user.id)
-                .order('created_at', { ascending: false })
-                .limit(100)
-                .then(({ data, error }) => {
-                    if (error) console.error('Error fetching logs', error);
-                    else setLogs(data || []);
-                    setLoadingLogs(false);
-                });
-        }
-    }, [user, fetchUsage]);
+const GeneralStatsTab = () => {
+    const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day');
+    const { data: stats, isLoading: isLoadingStats } = useQuery({
+        queryKey: ['generalStats', period],
+        queryFn: () => getGeneralStats(period),
+    });
+    const { data: modelStats, isLoading: isLoadingModelStats } = useQuery({
+        queryKey: ['modelUsageStats', period],
+        queryFn: () => getModelUsageStats(period),
+    });
 
-    const columns = [
-        { title: 'Дата', dataIndex: 'created_at', key: 'created_at', render: (ts: string) => new Date(ts).toLocaleString(), width: 180 },
-        { 
-            title: 'Чат', 
-            dataIndex: 'conversation_id', 
-            key: 'conversation_id',
-            render: (id: string, record: any) => (
-                id ? <Link to={`/chat/${id}`}>{record.conversations?.title || id}</Link> : 'N/A'
-            )
-        },
-        { title: 'Модель', dataIndex: 'model', key: 'model' },
-        { title: 'Токены промпта', dataIndex: 'prompt_tokens', key: 'prompt_tokens', align: 'right' as const },
-        { title: 'Токены ответа', dataIndex: 'completion_tokens', key: 'completion_tokens', align: 'right' as const },
-        { title: 'Всего токенов', dataIndex: 'total_tokens', key: 'total_tokens', align: 'right' as const },
-        { title: 'Статус', dataIndex: 'status', key: 'status' },
-    ];
+    const renderTitle = (title: string, stats: { model: string, total: number | string }[]) => (
+        <div>
+            <div>{title}</div>
+            <div style={{ fontSize: 14, fontWeight: 400, color: '#888' }}>
+                {stats.map(s => <div key={s.model}>{s.model}: {s.total}</div>)}
+            </div>
+        </div>
+    );
+
+    const requestStatsByModel = modelStats?.map(m => ({ model: m.model, total: m.total_requests })) || [];
+    const tokenStatsByModel = modelStats?.map(m => ({ model: m.model, total: m.total_tokens })) || [];
+    const totalRequests = requestStatsByModel.reduce((acc, cur) => acc + Number(cur.total), 0);
+    const totalTokens = tokenStatsByModel.reduce((acc, cur) => acc + Number(cur.total), 0);
     
-    if (!profile) {
-        return <p>Загрузка...</p>;
-    }
+    return (
+        <Spin spinning={isLoadingStats || isLoadingModelStats}>
+            <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20 }}>
+                <Select.Option value="day">За день</Select.Option>
+                <Select.Option value="week">За неделю</Select.Option>
+                <Select.Option value="month">За месяц</Select.Option>
+            </Select>
+            <Row gutter={16} style={{ marginBottom: 20 }}>
+                <Col span={12}>
+                    <Card>
+                        <Statistic 
+                            title={renderTitle('Запросы', requestStatsByModel)}
+                            value={totalRequests} 
+                            valueStyle={{ fontSize: 24 }}
+                        />
+                    </Card>
+                </Col>
+                <Col span={12}>
+                    <Card>
+                        <Statistic 
+                            title={renderTitle('Токены', tokenStatsByModel)}
+                            value={totalTokens} 
+                            valueStyle={{ fontSize: 24 }}
+                        />
+                    </Card>
+                </Col>
+            </Row>
+            <Title level={4}>Динамика использования</Title>
+            <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={stats}>
+                    <XAxis dataKey="date_trunc" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="total_requests" fill="#8884d8" name="Запросы" />
+                    <Bar dataKey="total_tokens" fill="#82ca9d" name="Токены" />
+                </BarChart>
+            </ResponsiveContainer>
+            <Title level={4}>Использование по моделям</Title>
+            <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                    <Pie data={modelStats} dataKey="total_requests" nameKey="model" cx="50%" cy="50%" outerRadius={100} fill="#8884d8" label>
+                        {modelStats?.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                </PieChart>
+            </ResponsiveContainer>
+        </Spin>
+    );
+};
+
+const UserStatsTab = () => {
+    const [selectedUser, setSelectedUser] = useState<string | null>(null);
+    const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day');
+    const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
+
+    const { data: users, isLoading: isLoadingUsers } = useQuery({
+        queryKey: ['allUsersForStats'],
+        queryFn: getAllUsersForStats,
+    });
+    const { data: stats, isLoading: isLoadingStats } = useQuery({
+        queryKey: ['userStats', selectedUser, period],
+        queryFn: () => selectedUser ? getUserStats(selectedUser, period) : [],
+        enabled: !!selectedUser,
+    });
+    const { data: history, isLoading: isLoadingHistory } = useQuery({
+        queryKey: ['userMessageHistory', selectedUser, period, pagination.current, pagination.pageSize],
+        queryFn: () => selectedUser ? getUserMessageHistory(selectedUser, period, pagination.pageSize, pagination.current) : [],
+        enabled: !!selectedUser,
+    });
+    
+    const historyColumns = [
+        { title: 'Дата', dataIndex: 'created_at', key: 'created_at' },
+        { title: 'Запрос', dataIndex: 'content', key: 'content' },
+        { title: 'Модель', dataIndex: 'model', key: 'model' },
+        { title: 'Токены', dataIndex: 'total_tokens', key: 'total_tokens' },
+    ];
+
+    const handleTableChange = (newPagination: any) => {
+        setPagination({
+            current: newPagination.current,
+            pageSize: newPagination.pageSize,
+        });
+    };
 
     return (
-        <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ flexShrink: 0 }}>
-                <Title level={2} style={{ marginBottom: 24 }}>Панель управления</Title>
-                <Row gutter={16} style={{ marginBottom: 24 }}>
-                    <Col span={6}>
-                        <Card>
-                            <Statistic title="Дневной лимит запросов" value={dailyUsage.requests} suffix={`/ ${profile.daily_request_limit}`} />
-                        </Card>
-                    </Col>
-                    <Col span={6}>
-                        <Card>
-                            <Statistic title="Месячный лимит запросов" value={monthlyUsage.requests} suffix={`/ ${profile.monthly_request_limit}`} />
-                        </Card>
-                    </Col>
-                    <Col span={6}>
-                        <Card>
-                            <Statistic title="Дневной лимит токенов" value={dailyUsage.tokens} suffix={`/ ${profile.daily_token_limit}`} />
-                        </Card>
-                    </Col>
-                    <Col span={6}>
-                        <Card>
-                            <Statistic title="Месячный лимит токенов" value={monthlyUsage.tokens} suffix={`/ ${profile.monthly_token_limit}`} />
-                        </Card>
-                    </Col>
-                </Row>
-                <Title level={3} style={{ marginBottom: 16 }}>История запросов</Title>
+        <div>
+            <Select
+                showSearch
+                placeholder="Выберите пользователя"
+                onChange={setSelectedUser}
+                loading={isLoadingUsers}
+                style={{ width: 300, marginBottom: 20 }}
+                filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+                options={users?.map(u => ({ value: u.id, label: u.email }))}
+            />
+            {selectedUser && (
+                 <Spin spinning={isLoadingStats || isLoadingHistory}>
+                    <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20, marginLeft: 10 }}>
+                        <Select.Option value="day">За день</Select.Option>
+                        <Select.Option value="week">За неделю</Select.Option>
+                        <Select.Option value="month">За месяц</Select.Option>
+                    </Select>
+                     <ResponsiveContainer width="100%" height={300}>
+                         <BarChart data={stats}>
+                             <XAxis dataKey="date_trunc" />
+                             <YAxis />
+                             <Tooltip />
+                             <Legend />
+                             <Bar dataKey="total_requests" fill="#8884d8" name="Запросы" />
+                             <Bar dataKey="total_tokens" fill="#82ca9d" name="Токены" />
+                         </BarChart>
+                     </ResponsiveContainer>
+                     <Title level={4} style={{ marginTop: 20 }}>История запросов</Title>
+                     <Table 
+                        dataSource={history || []}
+                        columns={historyColumns}
+                        rowKey="created_at"
+                        pagination={{
+                            ...pagination,
+                            pageSizeOptions: ['5', '10', '20', '50', '100'],
+                            showSizeChanger: true,
+                        }}
+                        onChange={handleTableChange}
+                     />
+                 </Spin>
+            )}
+        </div>
+    );
+}
+
+const DashboardPage: React.FC = () => {
+    const [activeTab, setActiveTab] = useState('1');
+    const { theme } = useThemeContext();
+    const isDark = theme === 'dark';
+
+    const items = [
+        { key: '1', label: 'Общая статистика' },
+        { key: '2', label: 'Пользователи' },
+    ];
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ 
+                background: isDark ? '#363535' : '#ffffff', 
+                padding: '24px 24px 0 24px',
+                flexShrink: 0 
+            }}>
+                <Title level={2} style={{ margin: 0 }}>Статистика</Title>
+                <Tabs activeKey={activeTab} onChange={setActiveTab} items={items} />
             </div>
-            
-            <div style={{ flex: 1, minHeight: 0 }}>
-                 <Table
-                    dataSource={logs}
-                    columns={columns}
-                    rowKey="id"
-                    loading={loadingLogs}
-                    pagination={{ pageSize: 10, showSizeChanger: false }}
-                    scroll={{ y: 'calc(100vh - 400px)' }} // Примерная высота, может потребовать подстройки
-                />
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px' }}>
+                <div style={{ paddingTop: 24 }}>
+                    {activeTab === '1' && <GeneralStatsTab />}
+                    {activeTab === '2' && <UserStatsTab />}
+                </div>
             </div>
         </div>
     );

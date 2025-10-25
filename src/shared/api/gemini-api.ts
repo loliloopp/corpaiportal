@@ -1,4 +1,5 @@
 import { AIProviderResponse } from "./deepseek-api";
+import { checkUsageLimit } from "./usage-api";
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
@@ -18,6 +19,8 @@ export const sendGeminiRequest = async (
   if (!GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY не установлен');
   }
+
+  await checkUsageLimit();
 
   const contents: GeminiMessage[] = messages
     .filter(msg => msg.role === 'user' || msg.role === 'assistant')

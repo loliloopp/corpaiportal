@@ -42,18 +42,7 @@ export const Sidebar = () => {
         },
       }));
 
-  const mainMenuItems: MenuProps['items'] = [
-    { 
-      key: '/dashboard', 
-      icon: <DashboardOutlined />, 
-      label: <Link to="/dashboard">Dashboard</Link> 
-    },
-    { 
-      key: '/settings', 
-      icon: <SettingOutlined />, 
-      label: <Link to="/settings">Настройки</Link> 
-    }
-  ];
+  const mainMenuItems: MenuProps['items'] = [];
 
   return (
     <Sider 

@@ -19,8 +19,7 @@ export const MainLayout = () => {
         <Content style={{ 
           background: isDark ? '#363535' : '#ffffff', 
           flex: 1, 
-          overflow: 'hidden', 
-          height: 0 
+          overflowY: 'auto', // Enable vertical scroll
         }}>
           <Outlet />
         </Content>
