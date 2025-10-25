@@ -33,20 +33,6 @@ const CurrentUserStats = () => {
 
 const UsageStats = () => {
     const { user } = useAuthStore();
-    const queryClient = useQueryClient();
-
-    useEffect(() => {
-        const unsubscribe = useChatStore.subscribe(
-            (state) => state.onSendMessageStart,
-            () => {
-                queryClient.setQueryData(['usageStats', user?.id], (oldData: any) => {
-                    if (!oldData) return oldData;
-                    return { ...oldData, usage: oldData.usage + 1 };
-                });
-            }
-        );
-        return unsubscribe;
-    }, [queryClient, user?.id]);
 
     const { data, isLoading, isError } = useQuery({
         queryKey: ['usageStats', user?.id],
@@ -54,28 +40,18 @@ const UsageStats = () => {
             if (!user) return null;
             const { data, error } = await supabase.rpc('get_user_usage_stats', { p_user_id: user.id });
             if (error) throw new Error(error.message);
-            return data;
+            // The RPC function returns a single object, not an array.
+            return data || { usage: 0, limit: 0 };
         },
         enabled: !!user,
         refetchInterval: 30000,
     });
 
-    useEffect(() => {
-        useChatStore.setState({ 
-            onSendMessageStart: () => {
-                queryClient.setQueryData(['usageStats', user?.id], (oldData: any) => {
-                    if (!oldData) return oldData;
-                    return { ...oldData, usage: oldData.usage + 1 };
-                });
-            }
-        });
-    }, [queryClient, user?.id]);
-
     if (isLoading) {
         return <Text style={{ color: '#888' }}>Загрузка лимитов...</Text>;
     }
 
-    if (isError) {
+    if (isError || !data) {
         return <Text style={{ color: 'red' }}>Ошибка лимитов</Text>;
     }
 

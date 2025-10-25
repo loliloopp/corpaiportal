@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from '@/features/auth';
 import { supabase } from '@/shared/lib/supabase';
 
-const queryClient = new QueryClient();
+export const queryClient = new QueryClient();
 
 export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const setSession = useAuthStore((state) => state.setSession);

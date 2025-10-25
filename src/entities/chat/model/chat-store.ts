@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Modal } from 'antd'; // Import Modal
 import { nanoid } from 'nanoid';
+import { queryClient } from '@/app/providers'; // Import queryClient
 import { Message } from './types';
 import { getConversations, getMessages, createConversation, saveMessage } from '../api/chat-api';
 import { useAuthStore } from '@/features/auth';
@@ -111,6 +112,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       
     } finally {
         set({ loading: false });
+        // Invalidate usage stats query to refetch the correct usage from the server
+        queryClient.invalidateQueries({ queryKey: ['usageStats', user?.id] });
     }
   },
 }));
