@@ -10,6 +10,7 @@ interface AuthState {
   isProfileLoading: boolean; // New state for profile loading
   setSession: (session: Session | null) => Promise<void>;
   signOut: () => Promise<void>;
+  signUp: (credentials: { email: any; password: any; lastName: any; }) => Promise<any>;
   setLoading: (loading: boolean) => void;
 }
 
@@ -40,6 +41,18 @@ export const useAuthStore = create<AuthState>((set) => ({
   signOut: async () => {
     await supabase.auth.signOut();
     set({ session: null, user: null, profile: null, isProfileLoading: false });
+  },
+  signUp: async ({ email, password, lastName }) => {
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          display_name: lastName,
+        },
+      },
+    });
+    return error;
   },
   setLoading: (loading) => set({ loading }),
 }));

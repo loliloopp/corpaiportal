@@ -1,16 +1,19 @@
 import React from 'react';
 import { Form, Input, Button, notification } from 'antd';
-import { supabase } from '@/shared/lib/supabase';
-import { Link } from 'react-router-dom';
+import { useAuthStore } from '../model/auth-store'; // Import the store
+import { Link, useNavigate } from 'react-router-dom'; // Import useNavigate
 
 export const SignUpForm = () => {
   const [loading, setLoading] = React.useState(false);
+  const signUp = useAuthStore((state) => state.signUp); // Get the signUp function
+  const navigate = useNavigate(); // Hook for navigation
 
   const onFinish = async (values: any) => {
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
+    const error = await signUp({
       email: values.email,
       password: values.password,
+      lastName: values.lastName,
     });
 
     if (error) {
@@ -23,6 +26,7 @@ export const SignUpForm = () => {
         message: 'Регистрация успешна',
         description: 'Пожалуйста, проверьте свою почту для подтверждения.',
       });
+      navigate('/login'); // Redirect to login page
     }
     setLoading(false);
   };
@@ -30,8 +34,16 @@ export const SignUpForm = () => {
   return (
     <Form name="signup" onFinish={onFinish} layout="vertical" requiredMark={false}>
       <Form.Item
+        name="lastName"
+        label="Фамилия"
+        rules={[{ required: true, message: 'Пожалуйста, введите вашу фамилию!' }]}
+      >
+        <Input />
+      </Form.Item>
+
+      <Form.Item
         name="email"
-        label="Email"
+        label="Рабочий Email"
         rules={[{ required: true, type: 'email', message: 'Пожалуйста, введите корректный email!' }]}
       >
         <Input />
