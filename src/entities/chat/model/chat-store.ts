@@ -4,11 +4,8 @@ import { nanoid } from 'nanoid';
 import { Message } from './types';
 import { getConversations, getMessages, createConversation, saveMessage } from '../api/chat-api';
 import { useAuthStore } from '@/features/auth';
-import { sendDeepSeekRequest, AIProviderResponse } from '@/shared/api/deepseek-api';
-import { sendOpenAIRequest } from '@/shared/api/openai-api';
-import { sendGeminiRequest } from '@/shared/api/gemini-api';
-import { sendGrokRequest } from '@/shared/api/grok-api';
-import { logUsage, useLimitsStore } from '@/entities/limits';
+import { sendAIRequest } from '@/shared/api/proxy-api';
+import { logUsage } from '@/entities/limits';
 import { MODELS } from '@/shared/config/models.config';
 
 type Conversation = {
@@ -120,39 +117,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const model = MODELS.find(m => m.id === selectedModel);
       if (!model) throw new Error('Selected model not found');
 
-      let aiResponse: AIProviderResponse;
-      switch(model.provider) {
-        case 'openai':
-          aiResponse = await sendOpenAIRequest(selectedModel, conversationHistory as any);
-          break;
-        case 'gemini':
-          aiResponse = await sendGeminiRequest(selectedModel, conversationHistory as any);
-          break;
-        case 'grok':
-          aiResponse = await sendGrokRequest(selectedModel, conversationHistory as any);
-          break;
-        case 'deepseek':
-        default:
-          aiResponse = await sendDeepSeekRequest(selectedModel, conversationHistory as any);
-          break;
-      }
+      // The new unified API call
+      const aiResponseData = await sendAIRequest(selectedModel, conversationHistory as any);
 
-      // Step 4: Log success and save AI response
-      await logUsage({
-        user_id: user.id,
-        message_id: savedUserMessage.id,
-        model: selectedModel,
-        prompt_tokens: aiResponse.usage.prompt_tokens,
-        completion_tokens: aiResponse.usage.completion_tokens,
-        total_tokens: aiResponse.usage.total_tokens,
-        status: 'success',
-      });
+      // AI response is now whatever the proxy forwarded. We need to parse it.
+      const aiMessageContent = aiResponseData.choices[0].message.content;
+
+
+      // Step 4 is now handled by the proxy, no need to log usage here.
 
       const aiMessage = {
         conversation_id: conversationId,
         user_id: user.id,
         role: 'assistant' as const,
-        content: aiResponse.content,
+        content: aiMessageContent,
         model: selectedModel,
       };
 
@@ -164,25 +142,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error: any) {
       console.error('Error in sendMessage:', error);
 
-      // Log the error. If user message was saved, we have its ID.
-      await logUsage({
-        user_id: user.id,
-        message_id: savedUserMessage?.id, // Can be undefined if save failed, which is ok for logs.
-        model: selectedModel,
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0,
-        status: 'error',
-        error_details: error.message,
+      // Error message now comes directly from the proxy
+      Modal.error({
+          title: 'Ошибка запроса',
+          content: error.message || 'Не удалось выполнить запрос. Попробуйте позже.',
       });
-
-      // Show specific modal for rate limit errors
-      if (error.message.includes('429') || error.message.includes('Дневной лимит')) {
-        Modal.error({
-          title: 'Лимит исчерпан или ошибка доступа',
-          content: 'Вы достигли дневного лимита запросов, либо у вашего ключа недостаточно средств или прав для использования этой модели.',
-        });
-      }
 
       // If the user's message was never saved (initial error), remove the optimistic one.
       // Otherwise, leave the saved message in place. This fixes the duplicate key error.
