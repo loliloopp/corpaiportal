@@ -4,18 +4,28 @@ RETURNS json AS $$
 DECLARE
     result json;
 BEGIN
-    SELECT json_agg(t)
-    INTO result
-    FROM (
-        SELECT
-            to_char(date_trunc(period, created_at), 'YYYY-MM-DD') AS date_trunc,
-            count(*) AS total_requests,
-            sum(total_tokens) AS total_tokens
-        FROM public.usage_logs
-        WHERE status = 'success'
-        GROUP BY 1
-        ORDER BY 1
-    ) t;
+    IF period = 'day' THEN
+        SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(h, 'HH24') || ':00' AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('day', now()), date_trunc('day', now()) + interval '23 hours', interval '1 hour') h
+            LEFT JOIN public.usage_logs ul ON date_trunc('hour', ul.created_at) = h AND ul.status = 'success'
+            GROUP BY h ORDER BY h
+        ) t;
+    ELSIF period = 'week' THEN
+         SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(d, 'Day') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('week', now()), date_trunc('week', now()) + interval '6 days', interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = d AND ul.status = 'success'
+            GROUP BY d ORDER BY d
+        ) t;
+    ELSE -- month
+         SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(d, 'MM-DD') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(now() - interval '29 days', now(), interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = date_trunc('day', d) AND ul.status = 'success'
+            GROUP BY 1 ORDER BY 1
+        ) t;
+    END IF;
     RETURN result;
 END;
 $$ LANGUAGE plpgsql;
@@ -26,18 +36,28 @@ RETURNS json AS $$
 DECLARE
     result json;
 BEGIN
-     SELECT json_agg(t)
-    INTO result
-    FROM (
-        SELECT
-            to_char(date_trunc(period, created_at), 'YYYY-MM-DD') AS date_trunc,
-            count(*) AS total_requests,
-            sum(total_tokens) AS total_tokens
-        FROM public.usage_logs
-        WHERE user_id = p_user_id AND status = 'success'
-        GROUP BY 1
-        ORDER BY 1
-    ) t;
+    IF period = 'day' THEN
+        SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(h, 'HH24') || ':00' AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('day', now()), date_trunc('day', now()) + interval '23 hours', interval '1 hour') h
+            LEFT JOIN public.usage_logs ul ON date_trunc('hour', ul.created_at) = h AND ul.user_id = p_user_id AND ul.status = 'success'
+            GROUP BY h ORDER BY h
+        ) t;
+    ELSIF period = 'week' THEN
+        SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(d, 'Day') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('week', now()), date_trunc('week', now()) + interval '6 days', interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = d AND ul.user_id = p_user_id AND ul.status = 'success'
+            GROUP BY d ORDER BY d
+        ) t;
+    ELSE -- month
+        SELECT json_agg(t) INTO result FROM (
+             SELECT to_char(d, 'MM-DD') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(now() - interval '29 days', now(), interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = date_trunc('day', d) AND ul.user_id = p_user_id AND ul.status = 'success'
+            GROUP BY 1 ORDER BY 1
+        ) t;
+    END IF;
     RETURN result;
 END;
 $$ LANGUAGE plpgsql;

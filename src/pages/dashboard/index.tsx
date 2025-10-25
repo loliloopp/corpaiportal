@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Tabs, Select, Typography, Row, Col, Statistic, Card, Spin, Table } from 'antd';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { getGeneralStats, getModelUsageStats, getUserStats, getAllUsersForStats, getUserMessageHistory } from '@/entities/statistics/api/statistics-api';
 import { useThemeContext } from '@/app/providers/theme-provider';
 
@@ -21,20 +21,22 @@ const GeneralStatsTab = () => {
         queryFn: () => getModelUsageStats(period),
     });
 
-    const renderTitle = (title: string, stats: { model: string, total: number | string }[]) => (
-        <div>
-            <div>{title}</div>
-            <div style={{ fontSize: 14, fontWeight: 400, color: '#888' }}>
-                {stats.map(s => <div key={s.model}>{s.model}: {s.total}</div>)}
-            </div>
-        </div>
-    );
+    const tableData = modelStats?.map(m => ({
+        key: m.model,
+        model: m.model,
+        requests: m.total_requests,
+        tokens: m.total_tokens,
+    })) || [];
 
-    const requestStatsByModel = modelStats?.map(m => ({ model: m.model, total: m.total_requests })) || [];
-    const tokenStatsByModel = modelStats?.map(m => ({ model: m.model, total: m.total_tokens })) || [];
-    const totalRequests = requestStatsByModel.reduce((acc, cur) => acc + Number(cur.total), 0);
-    const totalTokens = tokenStatsByModel.reduce((acc, cur) => acc + Number(cur.total), 0);
-    
+    const totalRequests = tableData.reduce((acc, cur) => acc + Number(cur.requests), 0);
+    const totalTokens = tableData.reduce((acc, cur) => acc + Number(cur.tokens), 0);
+
+    const columns = [
+        { title: 'Модель', dataIndex: 'model', key: 'model' },
+        { title: 'Запросы', dataIndex: 'requests', key: 'requests' },
+        { title: 'Токены', dataIndex: 'tokens', key: 'tokens' },
+    ];
+
     return (
         <Spin spinning={isLoadingStats || isLoadingModelStats}>
             <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20 }}>
@@ -42,36 +44,30 @@ const GeneralStatsTab = () => {
                 <Select.Option value="week">За неделю</Select.Option>
                 <Select.Option value="month">За месяц</Select.Option>
             </Select>
-            <Row gutter={16} style={{ marginBottom: 20 }}>
-                <Col span={12}>
-                    <Card>
-                        <Statistic 
-                            title={renderTitle('Запросы', requestStatsByModel)}
-                            value={totalRequests} 
-                            valueStyle={{ fontSize: 24 }}
-                        />
-                    </Card>
-                </Col>
-                <Col span={12}>
-                    <Card>
-                        <Statistic 
-                            title={renderTitle('Токены', tokenStatsByModel)}
-                            value={totalTokens} 
-                            valueStyle={{ fontSize: 24 }}
-                        />
-                    </Card>
-                </Col>
-            </Row>
-            <Title level={4}>Динамика использования</Title>
+            <Table 
+                dataSource={tableData}
+                columns={columns}
+                pagination={false}
+                bordered
+                size="small" // Make table more compact
+                summary={() => (
+                    <Table.Summary.Row>
+                        <Table.Summary.Cell index={0}><strong>Всего</strong></Table.Summary.Cell>
+                        <Table.Summary.Cell index={1}><strong>{totalRequests}</strong></Table.Summary.Cell>
+                        <Table.Summary.Cell index={2}><strong>{totalTokens}</strong></Table.Summary.Cell>
+                    </Table.Summary.Row>
+                )}
+            />
+            <Title level={4} style={{ marginTop: 20 }}>Динамика использования</Title>
             <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={stats}>
+                <LineChart data={stats}>
                     <XAxis dataKey="date_trunc" />
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="total_requests" fill="#8884d8" name="Запросы" />
-                    <Bar dataKey="total_tokens" fill="#82ca9d" name="Токены" />
-                </BarChart>
+                    <Line type="linear" dataKey="total_requests" stroke="#8884d8" name="Запросы" />
+                    <Line type="linear" dataKey="total_tokens" stroke="#82ca9d" name="Токены" />
+                </LineChart>
             </ResponsiveContainer>
             <Title level={4}>Использование по моделям</Title>
             <ResponsiveContainer width="100%" height={300}>
@@ -140,14 +136,14 @@ const UserStatsTab = () => {
                         <Select.Option value="month">За месяц</Select.Option>
                     </Select>
                      <ResponsiveContainer width="100%" height={300}>
-                         <BarChart data={stats}>
+                         <LineChart data={stats}>
                              <XAxis dataKey="date_trunc" />
                              <YAxis />
                              <Tooltip />
                              <Legend />
-                             <Bar dataKey="total_requests" fill="#8884d8" name="Запросы" />
-                             <Bar dataKey="total_tokens" fill="#82ca9d" name="Токены" />
-                         </BarChart>
+                             <Line type="linear" dataKey="total_requests" stroke="#8884d8" name="Запросы" />
+                             <Line type="linear" dataKey="total_tokens" stroke="#82ca9d" name="Токены" />
+                         </LineChart>
                      </ResponsiveContainer>
                      <Title level={4} style={{ marginTop: 20 }}>История запросов</Title>
                      <Table 
