@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Layout, Avatar, Dropdown, Space, Typography } from 'antd';
+import { Layout, Avatar, Dropdown, Space, Typography, Spin } from 'antd';
 import { UserOutlined, LogoutOutlined, SettingOutlined, BulbOutlined, DashboardOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/features/auth';
 import { useThemeContext } from '@/app/providers/theme-provider';
@@ -7,9 +7,29 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/shared/lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '@/entities/chat/model/chat-store';
+import { getCurrentUserSimpleStats } from '@/entities/users/api/users-api';
+
 
 const { Header: AntHeader } = Layout;
 const { Text } = Typography;
+
+const CurrentUserStats = () => {
+    const { user } = useAuthStore();
+    const { data, isLoading } = useQuery({
+        queryKey: ['currentUserSimpleStats', user?.id],
+        queryFn: () => user ? getCurrentUserSimpleStats(user.id) : null,
+        enabled: !!user,
+    });
+
+    if (isLoading || !data) return <Spin size="small" />;
+
+    return (
+        <Space size="large">
+            <Text style={{ fontSize: 12, color: '#888' }}>Всего запросов: {data.total}</Text>
+            <Text style={{ fontSize: 12, color: '#888' }}>Запросов за неделю: {data.weekly}</Text>
+        </Space>
+    )
+}
 
 const UsageStats = () => {
     const { user } = useAuthStore();
@@ -113,12 +133,13 @@ export const Header = () => {
     <AntHeader style={{ 
       padding: '0 24px', 
       display: 'flex', 
-      justifyContent: 'flex-end', 
+      justifyContent: 'space-between', // Changed
       alignItems: 'center',
       background: isDark ? '#363535' : '#ffffff',
       borderBottom: 'none',
       height: 64
     }}>
+      <CurrentUserStats />
       <Space size="large">
         <UsageStats />
         {user && (

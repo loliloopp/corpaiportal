@@ -101,9 +101,9 @@ const UserStatsTab = () => {
         queryFn: () => selectedUser ? getUserStats(selectedUser, period) : [],
         enabled: !!selectedUser,
     });
-    const { data: history, isLoading: isLoadingHistory } = useQuery({
+    const { data: historyData, isLoading: isLoadingHistory } = useQuery({
         queryKey: ['userMessageHistory', selectedUser, period, pagination.current, pagination.pageSize],
-        queryFn: () => selectedUser ? getUserMessageHistory(selectedUser, period, pagination.pageSize, pagination.current) : [],
+        queryFn: () => selectedUser ? getUserMessageHistory(selectedUser, period, pagination.pageSize, pagination.current) : { data: [], total: 0 },
         enabled: !!selectedUser,
     });
     
@@ -151,11 +151,12 @@ const UserStatsTab = () => {
                      </ResponsiveContainer>
                      <Title level={4} style={{ marginTop: 20 }}>История запросов</Title>
                      <Table 
-                        dataSource={history || []}
+                        dataSource={historyData?.data || []}
                         columns={historyColumns}
                         rowKey="created_at"
                         pagination={{
                             ...pagination,
+                            total: historyData?.total || 0,
                             pageSizeOptions: ['5', '10', '20', '50', '100'],
                             showSizeChanger: true,
                         }}

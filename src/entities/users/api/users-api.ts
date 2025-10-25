@@ -36,3 +36,9 @@ export const updateUserProfile = async (
 
     return data;
 }
+
+export const getCurrentUserSimpleStats = async (userId: string) => {
+    const { data, error } = await supabase.rpc('get_current_user_simple_stats', { p_user_id: userId });
+    if (error) throw error;
+    return data;
+}

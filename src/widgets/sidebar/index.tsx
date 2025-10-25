@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Layout, Menu, Spin, Button } from 'antd';
-import { SettingOutlined, MessageOutlined, PlusOutlined, DashboardOutlined } from '@ant-design/icons';
+import { MessageOutlined, PlusOutlined } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useChatStore } from '@/entities/chat/model/chat-store';
 import { useAuthStore } from '@/features/auth';

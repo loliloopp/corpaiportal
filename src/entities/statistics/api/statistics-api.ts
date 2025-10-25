@@ -19,7 +19,12 @@ export const getModelUsageStats = async (period: 'day' | 'week' | 'month') => {
 };
 
 export const getUserMessageHistory = async (userId: string, period: 'day' | 'week' | 'month', pageSize: number, page: number) => {
-    const { data, error } = await supabase.rpc('get_user_message_history', { p_user_id: userId, period, page_size: pageSize, page_number: page });
+    const { data, error } = await supabase.rpc('get_user_message_history', { 
+        p_user_id: userId, 
+        period, 
+        p_page_size: pageSize, 
+        p_page_number: page 
+    });
     if (error) throw error;
     return data;
 }

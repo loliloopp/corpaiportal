@@ -64,16 +64,29 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP FUNCTION IF EXISTS get_user_message_history(uuid, text);
-CREATE OR REPLACE FUNCTION get_user_message_history(p_user_id UUID, period TEXT, page_size INT, page_number INT)
+DROP FUNCTION IF EXISTS get_user_message_history(uuid, text, integer, integer);
+CREATE OR REPLACE FUNCTION get_user_message_history(p_user_id UUID, period TEXT, p_page_size INT, p_page_number INT)
 RETURNS json AS $$
 DECLARE
     result json;
+    total_count BIGINT;
     offset_val INT;
 BEGIN
-    offset_val := (page_number - 1) * page_size;
+    offset_val := (p_page_number - 1) * p_page_size;
 
-    SELECT json_agg(t)
+    -- Get total count first
+    SELECT count(*)
+    INTO total_count
+    FROM public.messages m
+    WHERE m.user_id = p_user_id 
+      AND m.role = 'user'
+      AND m.created_at >= date_trunc(period, now() at time zone 'utc');
+
+    -- Then get paginated data
+    SELECT json_build_object(
+        'total', total_count,
+        'data', COALESCE(json_agg(t), '[]'::json)
+    )
     INTO result
     FROM (
         SELECT 
@@ -87,9 +100,10 @@ BEGIN
           AND m.role = 'user'
           AND m.created_at >= date_trunc(period, now() at time zone 'utc')
         ORDER BY m.created_at DESC
-        LIMIT page_size
+        LIMIT p_page_size
         OFFSET offset_val
     ) t;
+
     RETURN result;
 END;
 $$ LANGUAGE plpgsql;
