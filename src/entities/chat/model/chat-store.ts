@@ -63,7 +63,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ selectedModel: model });
   },
   sendMessage: async (content: string) => {
-    get().onSendMessageStart?.(); // Trigger the callback for optimistic UI
+    get().onSendMessageStart?.(); 
 
     const { activeConversation, selectedModel, messages } = get();
     const { user } = useAuthStore.getState();
@@ -71,13 +71,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!user) return;
 
     set({ loading: true });
-    let conversationId = activeConversation;
-    let savedUserMessage: Message | null = null;
 
-    // Add user message to UI optimistically
     const optimisticUserMessage: Message = {
-      id: nanoid(), // Temporary optimistic ID
-      conversation_id: conversationId || 'optimistic-conv-id',
+      id: nanoid(),
+      conversation_id: activeConversation || 'optimistic-conv-id',
       user_id: user.id,
       role: 'user' as const,
       content: content,
@@ -87,72 +84,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({ messages: [...state.messages, optimisticUserMessage] }));
 
     try {
-      // Step 1: Ensure we have a conversation ID. Create one if it's a new chat.
-      if (!conversationId) {
-        const newConversation = await createConversation(user.id, content.substring(0, 50));
-        conversationId = newConversation.id;
-        set({ activeConversation: conversationId });
-        get().fetchConversations(user.id);
+      const conversationHistory = [...messages, optimisticUserMessage];
+      
+      const aiResponseData = await sendAIRequest(selectedModel, conversationHistory as any, activeConversation);
+
+      // If a new conversation was created, update the store and UI
+      if (!activeConversation && aiResponseData.conversationId) {
+          set({ activeConversation: aiResponseData.conversationId });
+          get().fetchConversations(user.id);
       }
 
-      // Step 2: Save the user message to DB to get a real ID.
-      const userMessageToSave: Omit<Message, 'id' | 'created_at'> & { id?: string } = {
-          ...optimisticUserMessage,
-          conversation_id: conversationId,
-          id: undefined, // Let the DB generate the UUID
-      };
-      savedUserMessage = await saveMessage(userMessageToSave);
-      
-      // Replace optimistic message with the real one from DB
-      set((state) => ({
-          messages: state.messages.map(m => m.id === optimisticUserMessage.id ? savedUserMessage! : m)
-      }));
-
-      // Step 3: Prepare history and make AI call
-      const conversationHistory = get().messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
-
-      const model = MODELS.find(m => m.id === selectedModel);
-      if (!model) throw new Error('Selected model not found');
-
-      // The new unified API call
-      const aiResponseData = await sendAIRequest(selectedModel, conversationHistory as any);
-
-      // AI response is now whatever the proxy forwarded. We need to parse it.
-      const aiMessageContent = aiResponseData.choices[0].message.content;
-
-
-      // Step 4 is now handled by the proxy, no need to log usage here.
-
-      const aiMessage = {
-        conversation_id: conversationId,
-        user_id: user.id,
-        role: 'assistant' as const,
-        content: aiMessageContent,
-        model: selectedModel,
-      };
-
-      const savedAiMessage = await saveMessage(aiMessage);
-      set((state) => ({
-        messages: [...state.messages, savedAiMessage],
-      }));
+      // We need to refetch messages to get the real IDs and content from DB
+      // This replaces the optimistic messages
+      await get().fetchMessages(get().activeConversation!);
 
     } catch (error: any) {
       console.error('Error in sendMessage:', error);
+      
+      // On error, remove the optimistic message
+      set((state) => ({ messages: state.messages.filter(m => m.id !== optimisticUserMessage.id) }));
 
-      // Error message now comes directly from the proxy
       Modal.error({
           title: 'Ошибка запроса',
           content: error.message || 'Не удалось выполнить запрос. Попробуйте позже.',
       });
-
-      // If the user's message was never saved (initial error), remove the optimistic one.
-      // Otherwise, leave the saved message in place. This fixes the duplicate key error.
-      if (!savedUserMessage) {
-        set((state) => ({ messages: state.messages.filter(m => m.id !== optimisticUserMessage.id) }));
-      }
       
     } finally {
         set({ loading: false });

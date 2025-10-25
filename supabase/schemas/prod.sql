@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict HZj5U3eiiVjRR7sZf5BxypE7VqSiu3DtBeeYilQVVtExEqwYK9pIs5LCB6FxgmX
+\restrict kYTtQbhpxxNsFF7V6dAe0SezXYAgqGvbyUovYSclyEieNVtzoznBfHIkIBnPP7s
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.6
@@ -837,6 +837,202 @@ $_$;
 
 
 ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO supabase_admin;
+
+--
+-- Name: get_current_user_simple_stats(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_current_user_simple_stats(p_user_id uuid) RETURNS json
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    result json;
+    total_requests BIGINT;
+    weekly_requests BIGINT;
+BEGIN
+    -- Get total requests
+    SELECT count(*)
+    INTO total_requests
+    FROM public.messages
+    WHERE user_id = p_user_id AND role = 'user';
+
+    -- Get weekly requests
+    SELECT count(*)
+    INTO weekly_requests
+    FROM public.messages
+    WHERE user_id = p_user_id 
+      AND role = 'user'
+      AND created_at >= date_trunc('week', now() at time zone 'utc');
+
+    SELECT json_build_object(
+        'total', total_requests,
+        'weekly', weekly_requests
+    )
+    INTO result;
+    RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_current_user_simple_stats(p_user_id uuid) OWNER TO postgres;
+
+--
+-- Name: get_general_stats(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_general_stats(period text) RETURNS json
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    result json;
+BEGIN
+    IF period = 'day' THEN
+        SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(h, 'HH24') || ':00' AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('day', now()), date_trunc('day', now()) + interval '23 hours', interval '1 hour') h
+            LEFT JOIN public.usage_logs ul ON date_trunc('hour', ul.created_at) = h AND ul.status = 'success'
+            GROUP BY h ORDER BY h
+        ) t;
+    ELSIF period = 'week' THEN
+         SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(d, 'Day') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('week', now()), date_trunc('week', now()) + interval '6 days', interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = d AND ul.status = 'success'
+            GROUP BY d ORDER BY d
+        ) t;
+    ELSE -- month
+         SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(d, 'MM-DD') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(now() - interval '29 days', now(), interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = date_trunc('day', d) AND ul.status = 'success'
+            GROUP BY 1 ORDER BY 1
+        ) t;
+    END IF;
+    RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_general_stats(period text) OWNER TO postgres;
+
+--
+-- Name: get_model_usage_stats(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_model_usage_stats(period text) RETURNS json
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    result json;
+BEGIN
+    SELECT json_agg(t)
+    INTO result
+    FROM (
+        SELECT
+            model,
+            count(*) AS total_requests,
+            sum(total_tokens) AS total_tokens
+        FROM public.usage_logs
+        WHERE status = 'success' AND created_at >= date_trunc(period, now() at time zone 'utc')
+        GROUP BY 1
+        ORDER BY 1
+    ) t;
+    RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_model_usage_stats(period text) OWNER TO postgres;
+
+--
+-- Name: get_user_message_history(uuid, text, integer, integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_user_message_history(p_user_id uuid, period text, p_page_size integer, p_page_number integer) RETURNS json
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    result json;
+    total_count BIGINT;
+    offset_val INT;
+BEGIN
+    offset_val := (p_page_number - 1) * p_page_size;
+
+    -- Get total count first
+    SELECT count(*)
+    INTO total_count
+    FROM public.messages m
+    WHERE m.user_id = p_user_id 
+      AND m.role = 'user'
+      AND m.created_at >= date_trunc(period, now() at time zone 'utc');
+
+    -- Then get paginated data
+    SELECT json_build_object(
+        'total', total_count,
+        'data', COALESCE(json_agg(t), '[]'::json)
+    )
+    INTO result
+    FROM (
+        SELECT 
+            to_char(m.created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at,
+            m.content,
+            m.model,
+            ul.total_tokens
+        FROM public.messages m
+        LEFT JOIN public.usage_logs ul ON m.id = ul.message_id
+        WHERE m.user_id = p_user_id 
+          AND m.role = 'user'
+          AND m.created_at >= date_trunc(period, now() at time zone 'utc')
+        ORDER BY m.created_at DESC
+        LIMIT p_page_size
+        OFFSET offset_val
+    ) t;
+
+    RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_user_message_history(p_user_id uuid, period text, p_page_size integer, p_page_number integer) OWNER TO postgres;
+
+--
+-- Name: get_user_stats(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_user_stats(p_user_id uuid, period text) RETURNS json
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    result json;
+BEGIN
+    IF period = 'day' THEN
+        SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(h, 'HH24') || ':00' AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('day', now()), date_trunc('day', now()) + interval '23 hours', interval '1 hour') h
+            LEFT JOIN public.usage_logs ul ON date_trunc('hour', ul.created_at) = h AND ul.user_id = p_user_id AND ul.status = 'success'
+            GROUP BY h ORDER BY h
+        ) t;
+    ELSIF period = 'week' THEN
+        SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(d, 'Day') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(date_trunc('week', now()), date_trunc('week', now()) + interval '6 days', interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = d AND ul.user_id = p_user_id AND ul.status = 'success'
+            GROUP BY d ORDER BY d
+        ) t;
+    ELSE -- month
+        SELECT json_agg(t) INTO result FROM (
+             SELECT to_char(d, 'MM-DD') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+            FROM generate_series(now() - interval '29 days', now(), interval '1 day') d
+            LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = date_trunc('day', d) AND ul.user_id = p_user_id AND ul.status = 'success'
+            GROUP BY 1 ORDER BY 1
+        ) t;
+    END IF;
+    RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_user_stats(p_user_id uuid, period text) OWNER TO postgres;
 
 --
 -- Name: get_user_usage_stats(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3325,13 +3521,14 @@ COMMENT ON COLUMN public.messages.token_count IS 'Количество токе�
 CREATE TABLE public.usage_logs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
-    conversation_id uuid,
     model text,
     prompt_tokens integer,
     completion_tokens integer,
     total_tokens integer,
     status text,
-    created_at timestamp(6) with time zone DEFAULT now() NOT NULL
+    created_at timestamp(6) with time zone DEFAULT now() NOT NULL,
+    error_details text,
+    message_id uuid
 );
 
 
@@ -3345,13 +3542,6 @@ CREATE TABLE public.user_profiles (
     id uuid NOT NULL,
     email text,
     daily_request_limit integer DEFAULT 100 NOT NULL,
-    daily_request_limit_enabled boolean DEFAULT true NOT NULL,
-    monthly_request_limit integer DEFAULT 3000 NOT NULL,
-    monthly_request_limit_enabled boolean DEFAULT true NOT NULL,
-    daily_token_limit integer DEFAULT 100000 NOT NULL,
-    daily_token_limit_enabled boolean DEFAULT true NOT NULL,
-    monthly_token_limit integer DEFAULT 3000000 NOT NULL,
-    monthly_token_limit_enabled boolean DEFAULT true NOT NULL,
     created_at timestamp(6) with time zone DEFAULT now() NOT NULL,
     updated_at timestamp(6) with time zone DEFAULT now() NOT NULL,
     role public.user_role DEFAULT 'user'::public.user_role NOT NULL
@@ -3672,6 +3862,37 @@ COPY auth.audit_log_entries (instance_id, id, payload, created_at, ip_address) F
 00000000-0000-0000-0000-000000000000	10d20371-b49f-463e-a494-187bcb713bd9	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 09:03:27.099841+00	
 00000000-0000-0000-0000-000000000000	fadfd79c-b548-4524-9fdd-4efb769bce80	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 09:03:27.113012+00	
 00000000-0000-0000-0000-000000000000	4e84ac2e-e022-44ec-81b4-6012c64ab842	{"action":"login","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 09:44:51.781318+00	
+00000000-0000-0000-0000-000000000000	2b54d716-06d9-4bff-aa6c-1cad44432a3e	{"action":"login","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 09:48:29.47706+00	
+00000000-0000-0000-0000-000000000000	67daea1f-c1a4-46f4-94a6-9d0870c8e93d	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 10:02:05.053843+00	
+00000000-0000-0000-0000-000000000000	c5e1ba13-9043-424b-bf00-1c022310feb7	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 10:02:05.060456+00	
+00000000-0000-0000-0000-000000000000	3a579f84-a8a9-48fe-b77b-6a59dd40594a	{"action":"login","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 10:25:41.673606+00	
+00000000-0000-0000-0000-000000000000	507f35a8-d95f-4e82-ae15-ee1375630498	{"action":"logout","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"account"}	2025-10-25 10:35:35.36925+00	
+00000000-0000-0000-0000-000000000000	54eb231b-8a96-4604-ac27-380c6550737c	{"action":"login","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 10:36:10.163254+00	
+00000000-0000-0000-0000-000000000000	62b6c72d-c575-4c8a-9885-1b8b430d1622	{"action":"login","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 10:38:05.961036+00	
+00000000-0000-0000-0000-000000000000	210017ac-e9b6-4a59-b2ff-c487740d7806	{"action":"logout","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"account"}	2025-10-25 10:46:46.603646+00	
+00000000-0000-0000-0000-000000000000	c6e91a60-363a-40ec-8a71-8b8abdaa385a	{"action":"login","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 10:47:09.934473+00	
+00000000-0000-0000-0000-000000000000	4fdf193b-4f5e-4a59-aee4-7ea481c4b5e7	{"action":"logout","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"account"}	2025-10-25 10:47:21.089763+00	
+00000000-0000-0000-0000-000000000000	053c11b8-6768-4f16-8dab-b15d09f56c1d	{"action":"login","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 10:47:29.005976+00	
+00000000-0000-0000-0000-000000000000	98783cec-c2db-4c20-9d3d-1dadbb35dc94	{"action":"logout","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"account"}	2025-10-25 11:08:26.447154+00	
+00000000-0000-0000-0000-000000000000	6d1f1baa-b8a5-4a91-8dce-18f6e5a6a358	{"action":"login","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 11:08:42.035042+00	
+00000000-0000-0000-0000-000000000000	8da27c3f-bdc0-44e2-b7b8-4a437b710abb	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 11:50:21.617073+00	
+00000000-0000-0000-0000-000000000000	e565b7c9-cb58-4d46-8534-6a8024d1b6d9	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 11:50:21.627602+00	
+00000000-0000-0000-0000-000000000000	03846994-60bf-4f90-96a3-dee9f5770a02	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 12:08:35.396044+00	
+00000000-0000-0000-0000-000000000000	036310cc-068a-44c5-a97d-ff60a5121cfc	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 12:08:35.403871+00	
+00000000-0000-0000-0000-000000000000	ed0d8bef-bd5a-44c0-ac92-def5d934de0c	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 12:49:43.476945+00	
+00000000-0000-0000-0000-000000000000	ebe27f87-3592-438d-96ac-f01bbc0444aa	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 12:49:43.487854+00	
+00000000-0000-0000-0000-000000000000	8de8d2a2-163f-466d-aa4a-beb0da6bfec0	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 13:07:34.080015+00	
+00000000-0000-0000-0000-000000000000	6dadcf19-f7f3-4c67-9190-f32585293930	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 13:07:34.08857+00	
+00000000-0000-0000-0000-000000000000	f0eb212a-7d6b-490e-8f20-4e257be31516	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 14:07:17.409678+00	
+00000000-0000-0000-0000-000000000000	be0ad0ef-c455-4ef6-883a-fdb7718e7503	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 14:07:17.431991+00	
+00000000-0000-0000-0000-000000000000	1108b6d5-a566-471f-9cf0-bf422c2bf99c	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 14:23:52.192013+00	
+00000000-0000-0000-0000-000000000000	8ac834da-808a-4c27-bf7d-6d393be06197	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 14:23:52.208664+00	
+00000000-0000-0000-0000-000000000000	debc1cac-51a6-4f73-9e3b-182cfd9904b4	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 15:16:47.457065+00	
+00000000-0000-0000-0000-000000000000	6ea3fa53-bd11-4399-a40e-44a5e0084312	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 15:16:47.475589+00	
+00000000-0000-0000-0000-000000000000	f04e93b1-6218-492c-8ab7-33b877664986	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 16:39:49.484902+00	
+00000000-0000-0000-0000-000000000000	f362aa45-ddf8-4659-b4dd-feaf6238ad95	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 16:39:49.499719+00	
+00000000-0000-0000-0000-000000000000	f00524cb-5353-4660-a05e-e0b4d817d0a0	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 16:40:34.309873+00	
+00000000-0000-0000-0000-000000000000	d3c0e23e-1e1b-47ca-b281-36c4375987e6	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 16:40:34.316234+00	
 \.
 
 
@@ -3706,12 +3927,8 @@ COPY auth.instances (id, uuid, raw_base_config, created_at, updated_at) FROM std
 --
 
 COPY auth.mfa_amr_claims (session_id, created_at, updated_at, authentication_method, id) FROM stdin;
-6cc49b64-6950-49ce-9a63-eb87a8c5e721	2025-10-23 13:39:39.850685+00	2025-10-23 13:39:39.850685+00	password	6392f184-e9e4-449d-ba2b-167104db611f
-a0a938bf-908d-407a-afcf-51fa8b549674	2025-10-23 15:25:19.987137+00	2025-10-23 15:25:19.987137+00	password	4e514a88-1567-404d-a30c-024ad23c5808
-c33b52bc-e0d7-40e3-896e-ff851505c433	2025-10-23 16:25:56.655814+00	2025-10-23 16:25:56.655814+00	password	0701e9da-233d-49b7-be1c-1bc35af37b7d
-1e5b85d3-af76-4099-9f10-05c8c9073893	2025-10-24 09:48:38.271357+00	2025-10-24 09:48:38.271357+00	password	10556b09-e69c-4155-9438-f70288435851
-da3ffb56-9679-4ac3-a217-c79dad6088c5	2025-10-25 07:20:32.662521+00	2025-10-25 07:20:32.662521+00	otp	bbdb7761-0d78-4e74-bb13-2059bdf1e5d7
-738f1d28-071d-4392-a5b9-e5c70b2c2069	2025-10-25 09:44:51.829882+00	2025-10-25 09:44:51.829882+00	password	20b20162-3a7a-4e35-8a07-205a15b06c5e
+aba75ce1-94ea-446d-8e18-4a611a0e1338	2025-10-25 10:47:29.012002+00	2025-10-25 10:47:29.012002+00	password	d91e6183-1b60-44c6-991c-3bef40df7209
+92bcc80a-6438-4e3e-a356-fa6bf8497706	2025-10-25 11:08:42.060774+00	2025-10-25 11:08:42.060774+00	password	b87e4c30-92cb-433e-8681-48c08e91e1c1
 \.
 
 
@@ -3768,21 +3985,17 @@ COPY auth.one_time_tokens (id, user_id, token_type, token_hash, relates_to, crea
 --
 
 COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, updated_at, parent, session_id) FROM stdin;
-00000000-0000-0000-0000-000000000000	2	3rt5e7lchl55	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-23 13:39:39.8487+00	2025-10-23 15:23:12.985091+00	\N	6cc49b64-6950-49ce-9a63-eb87a8c5e721
-00000000-0000-0000-0000-000000000000	3	c63tcjhn3e4l	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-23 15:23:12.989038+00	2025-10-23 15:23:12.989038+00	3rt5e7lchl55	6cc49b64-6950-49ce-9a63-eb87a8c5e721
-00000000-0000-0000-0000-000000000000	5	hczfdqwktnwo	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-23 15:25:19.985903+00	2025-10-23 15:25:19.985903+00	\N	a0a938bf-908d-407a-afcf-51fa8b549674
-00000000-0000-0000-0000-000000000000	7	7a5rttpaw425	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-23 16:25:56.654567+00	2025-10-24 06:21:00.814212+00	\N	c33b52bc-e0d7-40e3-896e-ff851505c433
-00000000-0000-0000-0000-000000000000	8	x5rpnkgr3ctv	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-24 06:21:00.825274+00	2025-10-24 07:45:00.691117+00	7a5rttpaw425	c33b52bc-e0d7-40e3-896e-ff851505c433
-00000000-0000-0000-0000-000000000000	9	tepcplgsr3lk	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-24 07:45:00.704219+00	2025-10-24 07:45:00.704219+00	x5rpnkgr3ctv	c33b52bc-e0d7-40e3-896e-ff851505c433
-00000000-0000-0000-0000-000000000000	10	wgkgvydc5cl2	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-24 09:48:38.249607+00	2025-10-24 10:57:08.372344+00	\N	1e5b85d3-af76-4099-9f10-05c8c9073893
-00000000-0000-0000-0000-000000000000	11	bljmwyulclp3	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-24 10:57:08.390947+00	2025-10-24 11:55:11.533224+00	wgkgvydc5cl2	1e5b85d3-af76-4099-9f10-05c8c9073893
-00000000-0000-0000-0000-000000000000	12	oepqg2kvobva	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-24 11:55:11.544288+00	2025-10-24 13:01:33.815467+00	bljmwyulclp3	1e5b85d3-af76-4099-9f10-05c8c9073893
-00000000-0000-0000-0000-000000000000	13	ovlgupd2txvv	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-24 13:01:33.820138+00	2025-10-24 13:59:44.528385+00	oepqg2kvobva	1e5b85d3-af76-4099-9f10-05c8c9073893
-00000000-0000-0000-0000-000000000000	14	qmv3hkwkifgh	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-24 13:59:44.540415+00	2025-10-24 14:57:48.007234+00	ovlgupd2txvv	1e5b85d3-af76-4099-9f10-05c8c9073893
-00000000-0000-0000-0000-000000000000	15	4oadskcsvpqt	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-24 14:57:48.012975+00	2025-10-24 14:57:48.012975+00	qmv3hkwkifgh	1e5b85d3-af76-4099-9f10-05c8c9073893
-00000000-0000-0000-0000-000000000000	16	bgsw3wifnnlx	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 07:20:32.645267+00	2025-10-25 09:03:27.116318+00	\N	da3ffb56-9679-4ac3-a217-c79dad6088c5
-00000000-0000-0000-0000-000000000000	17	xc2a36ztkizy	f6979247-726b-487c-8b13-ef5e1ae056d9	f	2025-10-25 09:03:27.124693+00	2025-10-25 09:03:27.124693+00	bgsw3wifnnlx	da3ffb56-9679-4ac3-a217-c79dad6088c5
-00000000-0000-0000-0000-000000000000	18	ebmqmncbb3bf	f6979247-726b-487c-8b13-ef5e1ae056d9	f	2025-10-25 09:44:51.813453+00	2025-10-25 09:44:51.813453+00	\N	738f1d28-071d-4392-a5b9-e5c70b2c2069
+00000000-0000-0000-0000-000000000000	25	miy7gbxheqch	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 10:47:29.008089+00	2025-10-25 11:50:21.629004+00	\N	aba75ce1-94ea-446d-8e18-4a611a0e1338
+00000000-0000-0000-0000-000000000000	26	rgjb62qnyzjx	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 11:08:42.051232+00	2025-10-25 12:08:35.404488+00	\N	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	27	wbdc4pr3afr4	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 11:50:21.63938+00	2025-10-25 12:49:43.49106+00	miy7gbxheqch	aba75ce1-94ea-446d-8e18-4a611a0e1338
+00000000-0000-0000-0000-000000000000	28	t52m5lospq46	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 12:08:35.409442+00	2025-10-25 13:07:34.090454+00	rgjb62qnyzjx	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	30	tlqh4lddkat4	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 13:07:34.096527+00	2025-10-25 14:07:17.435853+00	t52m5lospq46	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	29	cp3avyi74lkf	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 12:49:43.505395+00	2025-10-25 14:23:52.209374+00	wbdc4pr3afr4	aba75ce1-94ea-446d-8e18-4a611a0e1338
+00000000-0000-0000-0000-000000000000	31	ghdx45all7rz	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 14:07:17.454814+00	2025-10-25 15:16:47.47753+00	tlqh4lddkat4	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	33	qv2swa3ec4vb	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 15:16:47.492527+00	2025-10-25 16:39:49.502589+00	ghdx45all7rz	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	34	froeuve6j7yd	f6979247-726b-487c-8b13-ef5e1ae056d9	f	2025-10-25 16:39:49.518445+00	2025-10-25 16:39:49.518445+00	qv2swa3ec4vb	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	32	spma4gva3zqf	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 14:23:52.22737+00	2025-10-25 16:40:34.316926+00	cp3avyi74lkf	aba75ce1-94ea-446d-8e18-4a611a0e1338
+00000000-0000-0000-0000-000000000000	35	5mqvmzhsjse4	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-25 16:40:34.31787+00	2025-10-25 16:40:34.31787+00	spma4gva3zqf	aba75ce1-94ea-446d-8e18-4a611a0e1338
 \.
 
 
@@ -3882,12 +4095,8 @@ COPY auth.schema_migrations (version) FROM stdin;
 --
 
 COPY auth.sessions (id, user_id, created_at, updated_at, factor_id, aal, not_after, refreshed_at, user_agent, ip, tag, oauth_client_id) FROM stdin;
-6cc49b64-6950-49ce-9a63-eb87a8c5e721	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-23 13:39:39.847431+00	2025-10-23 15:23:12.997033+00	\N	aal1	\N	2025-10-23 15:23:12.996951	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
-a0a938bf-908d-407a-afcf-51fa8b549674	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-23 15:25:19.985066+00	2025-10-23 15:25:19.985066+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
-c33b52bc-e0d7-40e3-896e-ff851505c433	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-23 16:25:56.653766+00	2025-10-24 07:45:00.72685+00	\N	aal1	\N	2025-10-24 07:45:00.724301	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
-1e5b85d3-af76-4099-9f10-05c8c9073893	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-24 09:48:38.237166+00	2025-10-24 14:57:48.032124+00	\N	aal1	\N	2025-10-24 14:57:48.031325	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
-da3ffb56-9679-4ac3-a217-c79dad6088c5	f6979247-726b-487c-8b13-ef5e1ae056d9	2025-10-25 07:20:32.62986+00	2025-10-25 09:03:27.139798+00	\N	aal1	\N	2025-10-25 09:03:27.139028	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
-738f1d28-071d-4392-a5b9-e5c70b2c2069	f6979247-726b-487c-8b13-ef5e1ae056d9	2025-10-25 09:44:51.800132+00	2025-10-25 09:44:51.800132+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
+aba75ce1-94ea-446d-8e18-4a611a0e1338	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-25 10:47:29.007311+00	2025-10-25 16:40:34.321431+00	\N	aal1	\N	2025-10-25 16:40:34.321344	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
+92bcc80a-6438-4e3e-a356-fa6bf8497706	f6979247-726b-487c-8b13-ef5e1ae056d9	2025-10-25 11:08:42.045036+00	2025-10-25 16:39:49.537694+00	\N	aal1	\N	2025-10-25 16:39:49.536948	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
 \.
 
 
@@ -3912,8 +4121,8 @@ COPY auth.sso_providers (id, resource_id, created_at, updated_at, disabled) FROM
 --
 
 COPY auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, invited_at, confirmation_token, confirmation_sent_at, recovery_token, recovery_sent_at, email_change_token_new, email_change, email_change_sent_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at, phone, phone_confirmed_at, phone_change, phone_change_token, phone_change_sent_at, email_change_token_current, email_change_confirm_status, banned_until, reauthentication_token, reauthentication_sent_at, is_sso_user, deleted_at, is_anonymous) FROM stdin;
-00000000-0000-0000-0000-000000000000	f6979247-726b-487c-8b13-ef5e1ae056d9	authenticated	authenticated	mosgate@gmail.com	$2a$10$L8plCueXWreLZLZOKOTbje28tS2D.mphEH3vP.SBbq/YxsbtZj7GC	2025-10-25 07:20:32.618457+00	\N		2025-10-25 07:20:18.092671+00		\N			\N	2025-10-25 09:44:51.799353+00	{"provider": "email", "providers": ["email"]}	{"sub": "f6979247-726b-487c-8b13-ef5e1ae056d9", "email": "mosgate@gmail.com", "email_verified": true, "phone_verified": false}	\N	2025-10-25 07:20:18.054934+00	2025-10-25 09:44:51.828522+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	authenticated	authenticated	eugsu10@gmail.com	$2a$10$ycLTAeppx6j9uZ6OSL3EOOil5iKV.HJJkMzBWoZqTvwNmW3B8Laoa	2025-10-23 13:36:30.71992+00	\N		\N		\N			\N	2025-10-24 09:48:38.235194+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-10-23 13:36:30.688124+00	2025-10-24 14:57:48.024114+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	f6979247-726b-487c-8b13-ef5e1ae056d9	authenticated	authenticated	mosgate@gmail.com	$2a$10$L8plCueXWreLZLZOKOTbje28tS2D.mphEH3vP.SBbq/YxsbtZj7GC	2025-10-25 07:20:32.618457+00	\N		2025-10-25 07:20:18.092671+00		\N			\N	2025-10-25 11:08:42.044364+00	{"provider": "email", "providers": ["email"]}	{"sub": "f6979247-726b-487c-8b13-ef5e1ae056d9", "email": "mosgate@gmail.com", "email_verified": true, "phone_verified": false}	\N	2025-10-25 07:20:18.054934+00	2025-10-25 16:39:49.527038+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	authenticated	authenticated	eugsu10@gmail.com	$2a$10$ycLTAeppx6j9uZ6OSL3EOOil5iKV.HJJkMzBWoZqTvwNmW3B8Laoa	2025-10-23 13:36:30.71992+00	\N		\N		\N			\N	2025-10-25 10:47:29.006622+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-10-23 13:36:30.688124+00	2025-10-25 16:40:34.318762+00	\N	\N			\N		0	\N		\N	f	\N	f
 \.
 
 
@@ -3931,6 +4140,14 @@ bfae7390-9585-4f80-9a86-cd0b4bfc71af	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	мож
 cf1044e5-86f4-4219-946a-0f465eac6efa	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	может ли работать модель gemini pro через api, есл	2025-10-24 14:45:21.689703+00
 98d56c20-4f57-4221-8b9a-3451d56f82ea	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	отличие flash от pro	2025-10-24 14:50:53.511791+00
 25aa2208-f658-420d-b9ec-87cb57ffae80	f6979247-726b-487c-8b13-ef5e1ae056d9	как корректно настроить авторизацию пользователя в	2025-10-25 07:22:05.903281+00
+d87866c5-84bc-49b4-89e7-0d48eae78868	f6979247-726b-487c-8b13-ef5e1ae056d9	как проще всего привязать роли для бизнес приложен	2025-10-25 10:26:50.989677+00
+9f543d24-126b-40f9-a428-f954b19c4548	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	площадь франции	2025-10-25 10:36:29.675501+00
+2d4679f5-b8d1-4da1-b436-affb19574b32	f6979247-726b-487c-8b13-ef5e1ae056d9	площадь тайланда	2025-10-25 10:37:44.444324+00
+1e3575ba-2546-4dae-9296-301d46622cda	f6979247-726b-487c-8b13-ef5e1ae056d9	площадь руанды	2025-10-25 10:54:37.453756+00
+d0dc5f50-ebd4-437b-9132-e45405313f99	f6979247-726b-487c-8b13-ef5e1ae056d9	площадь  руанды	2025-10-25 11:08:04.509061+00
+b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	площадь руанды	2025-10-25 11:09:03.902869+00
+5c79d89f-d09c-4576-9ef3-3e381515879b	f6979247-726b-487c-8b13-ef5e1ae056d9	площадь румынии	2025-10-25 13:29:24.302456+00
+25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	приведи список 5 самых больших стран азии и африки	2025-10-25 14:26:54.706074+00
 \.
 
 
@@ -3977,6 +4194,48 @@ b9fea3e5-0461-4258-b7dc-4dbd20f79603	25aa2208-f658-420d-b9ec-87cb57ffae80	f69792
 f563ed05-6203-4933-b72c-1a8b3f08b7f5	25aa2208-f658-420d-b9ec-87cb57ffae80	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Cursor AI — это среда разработки (IDE), а не хостинг или платформа для запуска серверов. Вы не "добавляете" MCP сервер *внутрь* Cursor AI для его запуска.\n\nВместо этого вы используете Cursor AI для **работы с файлами и кодом, относящимися к серверу**.\n\nВот как это правильно делать:\n\n1.  **Удаленная разработка (Remote - SSH):**\n    *   **Наиболее интегрированный и рекомендуемый способ.** Вы настраиваете подключение к вашему *удаленному серверу*, где уже установлен или будет установлен MCP.\n    *   Cursor AI (поскольку он основан на VS Code) имеет функциональность "Remote - SSH". Это позволяет вам подключиться к удаленной машине через SSH и работать с файлами сервера так, будто они находятся локально на вашем компьютере.\n    *   **Как:** Установите расширение "Remote - SSH" (если оно не встроено), настройте SSH-соединение с вашим MCP сервером, и затем откройте папку сервера прямо в Cursor AI.\n    *   **Преимущества:** Вы можете редактировать конфигурационные файлы, разрабатывать плагины, просматривать логи и запускать команды в терминале сервера — всё прямо из Cursor AI.\n\n2.  **Локальная разработка и деплоймент:**\n    *   Если вы разрабатываете плагины или кастомные моды для MCP, вы держите их исходный код локально на вашем компьютере, открывая проект в Cursor AI.\n    *   После того как вы написали и скомпилировали ваш плагин (.jar файл), вам нужно будет **вручную или с помощью скрипта загрузить его на ваш MCP сервер** (который находится на отдельном хостинге) в папку `plugins`.\n    *   **Как:** Используйте SFTP/SCP клиент (например, FileZilla), команды `scp` в терминале или автоматизированные скрипты для передачи файлов.\n\n**Итог:** Cursor AI поможет вам с написанием кода, редактированием файлов и использованием AI-помощника для проекта MCP сервера, но сам запуск и хостинг сервера происходит на отдельной машине (локальной или удаленной). Вы "добавляете" сервер не в Cursor AI, а Cursor AI "подключается" к файлам на этом сервере или работает с их локальными копиями.	gemini-2.5-flash	\N	2025-10-25 07:27:27.361601+00
 17866dff-89cb-44ac-a9a9-54e7393bc39f	25aa2208-f658-420d-b9ec-87cb57ffae80	f6979247-726b-487c-8b13-ef5e1ae056d9	user	я хочу подключить существующие mcp сервера сторонней разработки context7 и brightdata для более эффективной работы модели	gemini-2.5-flash	\N	2025-10-25 07:30:26.606735+00
 ff6ccaad-7aec-4cd4-810d-4d0fa246cd0b	25aa2208-f658-420d-b9ec-87cb57ffae80	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Отлично, теперь стало намного яснее, что вы имеете в виду под "MCP серверами" в контексте Cursor AI!\n\nMCP здесь, вероятно, означает **"Model Control Plane"** или нечто подобное, а не Minecraft Server. Context7 и BrightData — это провайдеры прокси-серверов и данных, которые могут быть использованы для улучшения работы AI-моделей или доступа к информации.\n\nЕсли вы хотите **подключить Cursor AI к сервисам Context7 и BrightData для более эффективной работы модели (вероятно, AI-модели, встроенной в Cursor, или вашей собственной, которую вы разрабатываете)**, то вот как это обычно делается:\n\nCursor AI, как и любая другая IDE, использует HTTP(S) запросы для взаимодействия с внешними сервисами. Чтобы подключить его к Context7 и BrightData, вам нужно использовать их как **прокси-серверы** для исходящих запросов Cursor AI или вашей модели.\n\nВот краткое пошаговое руководство:\n\n1.  **Настройка Прокси в Cursor AI (или вашем проекте):**\n    *   **Для исходящих запросов Cursor AI:** Если вы хотите, чтобы сам Cursor AI (например, для доступа к определенным API или внешним ресурсам) использовал прокси, вам нужно настроить прокси-сервер на уровне операционной системы или в настройках Cursor AI (если такая опция есть). Это обычно делается через переменные среды (`HTTP_PROXY`, `HTTPS_PROXY`) или GUI-настройки прокси в вашей ОС.\n    *   **Для вашего кода/модели:** Если ваша AI-модель или скрипты, которые вы пишете в Cursor AI, делают HTTP-запросы (например, к веб-сайтам для сбора данных), то вам нужно настроить прокси в **коде вашей модели/скрипта**.\n\n2.  **Получение Деталей Прокси от Context7/BrightData:**\n    *   Зарегистрируйтесь на платформах Context7 и BrightData.\n    *   Создайте необходимые прокси-серверы/доступы.\n    *   Они предоставят вам:\n        *   **Адрес прокси-сервера** (IP-адрес или доменное имя, например, `gate.smartproxy.com`).\n        *   **Порт** (например, `7000`).\n        *   **Имя пользователя и Пароль** для аутентификации на прокси (если требуется).\n        *   Возможно, специфические HTTP-заголовки или другие параметры.\n\n3.  **Интеграция в ваш код (наиболее вероятный сценарий):**\n    *   В коде, который вы пишете в Cursor AI (например, на Python с библиотеками `requests`, `urllib`, `httpx`), вы указываете прокси-сервер перед отправкой запросов.\n    *   **Пример на Python с `requests`:**\n        ```python\n        import requests\n\n        proxies = {\n            'http': 'http://USERNAME:PASSWORD@PROXY_HOST:PROXY_PORT',\n            'https': 'http://USERNAME:PASSWORD@PROXY_HOST:PROXY_PORT',\n            # Или 'https': 'https://USERNAME:PASSWORD@PROXY_HOST:PROXY_PORT' если прокси поддерживает HTTPS напрямую\n        }\n\n        # Замените на ваши данные от BrightData/Context7\n        proxy_username = "YOUR_BRIGHTDATA_USERNAME"\n        proxy_password = "YOUR_BRIGHTDATA_PASSWORD"\n        proxy_host = "geo.brightdata.com" # Пример\n        proxy_port = "22225" # Пример\n\n        proxies = {\n            'http': f'http://{proxy_username}:{proxy_password}@{proxy_host}:{proxy_port}',\n            'https': f'http://{proxy_username}:{proxy_password}@{proxy_host}:{proxy_port}',\n        }\n\n        try:\n            response = requests.get('https://example.com', proxies=proxies)\n            print(response.text)\n        except requests.exceptions.RequestException as e:\n            print(f"Ошибка при запросе через прокси: {e}")\n\n        ```\n    *   Это позволит вашей модели или скрипту отправлять запросы через прокси-серверы BrightData или Context7, что может помочь в обходе блокировок, сборе данных из разных гео-локаций или для более стабильного доступа к внешним ресурсам, необходимым для обучения/работы модели.\n\n**Кратко:**\n1.  Получите учетные данные и адрес прокси от Context7/BrightData.\n2.  В своем коде, который вы пишете и запускаете через Cursor AI, настройте HTTP-запросы на использование этих прокси. Cursor AI сам по себе не "подключается" к ним напрямую, но ваш код, написанный в Cursor AI, будет их использовать.	gemini-2.5-flash	\N	2025-10-25 07:30:35.708147+00
+f6bfbc43-af76-4f47-aa57-3218d8053d7b	d87866c5-84bc-49b4-89e7-0d48eae78868	f6979247-726b-487c-8b13-ef5e1ae056d9	user	как проще всего привязать роли для бизнес приложений при аутентификации через supabase	gemini-2.5-flash	\N	2025-10-25 10:26:51.20685+00
+02a4f6ea-8428-4447-ad71-0ba27b2c544a	9f543d24-126b-40f9-a428-f954b19c4548	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	user	площадь франции	deepseek-chat	\N	2025-10-25 10:36:29.885538+00
+ff702583-0232-48a6-a203-66815d9db2ab	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Четвертой по величине страной в Африке является **Ливия**.\n\n**Площадь Ливии:** около **1 759 540 км²**.\n\nТаким образом, Топ-4 крупнейших стран Африки по площади:\n\n1.  **Алжир** (~2,38 млн км²)\n2.  **Демократическая Республика Конго** (~2,34 млн км²)\n3.  **Судан** (~1,89 млн км²)\n4.  **Ливия** (~1,76 млн км²)	gemini-2.5-flash	\N	2025-10-25 11:20:15.276494+00
+5b66bcf8-1951-4ba3-ac81-63c169fb19e8	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Конечно, вот список из **5 крупнейших стран Африки** по площади:\n\n1.  **Алжир** — ≈ 2 381 741 км²\n2.  **Демократическая Республика Конго** — ≈ 2 344 858 км²\n3.  **Судан** — ≈ 1 886 068 км²\n4.  **Ливия** — ≈ 1 759 540 км²\n5.  **Чад** — ≈ 1 284 000 км²	deepseek-chat	\N	2025-10-25 11:36:49.092277+00
+f9f49b28-6251-44f3-b07a-9fe05ba6d48c	9f543d24-126b-40f9-a428-f954b19c4548	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	assistant	Конечно, вот подробная информация о площади Франции.\n\n**Основная территория (Метрополия):**\n*   **547 030 км²** (примерно 551 500 км², включая внутренние водоемы).\n\n**Полная территория (с учетом заморских владений):**\n*   **643 801 км²** — это **самая большая страна в Европейском Союзе** и 42-я по площади в мире.\n\n### Детализация:\n\n1.  **Метрополия (Европейская Франция):**\n    *   Часть страны, расположенная в Европе. Часто ее называют "Шестиугольник" (*L'Hexagone*) из-за ее формы.\n    *   Включает континентальную часть и острова, такие как Корсика в Средиземном море.\n    *   Площадь: **~547 030 км²**.\n\n2.  **Заморская Франция (*France d'outre-mer*):**\n    *   Состоит из 5 заморских департаментов и регионов (Гваделупа, Мартиника, Гвиана, Реюньон, Майотта), а также заморских сообществ и других территорий (например, Французская Полинезия, Новая Каледония, Сен-Мартен и др.).\n    *   Площадь всех заморских территорий: **~96 771 км²**.\n    *   Крупнейшая из них — **Французская Гвиана** в Южной Америке, площадью ~83 534 км².\n\n### Сравнение для наглядности:\n\n*   Площадь Франции (метрополия) примерно равна **сумме площадей Германии и Великобритании**.\n*   Она почти **вдвое больше**, чем площадь Великобритании.\n*   Она чуть **меньше**, чем штат Техас в США (~695 662 км²).\n\n### Ключевой вывод:\n\nКогда говорят о площади Франции в контексте Европы, обычно имеют в виду **метрополию (~547 тыс. км²)**. Если же учитывать все территории по всему миру, то площадь страны составляет **~644 тыс. км²**.	deepseek-chat	\N	2025-10-25 10:36:50.030709+00
+58bdfa1a-4f24-4fe7-94b2-2cef08edcc10	2d4679f5-b8d1-4da1-b436-affb19574b32	f6979247-726b-487c-8b13-ef5e1ae056d9	user	площадь тайланда	gemini-2.5-flash	\N	2025-10-25 10:37:44.583488+00
+223bd70c-3fc1-4cc0-a0dd-3a6de6e647b5	2d4679f5-b8d1-4da1-b436-affb19574b32	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Площадь Таиланда составляет приблизительно **513 120 квадратных километров (км²)**.\n\nЭто также около **198 120 квадратных миль**.	gemini-2.5-flash	\N	2025-10-25 10:37:51.571762+00
+eef96774-2084-4145-b7f1-8b851caa73a2	1e3575ba-2546-4dae-9296-301d46622cda	f6979247-726b-487c-8b13-ef5e1ae056d9	user	площадь руанды	deepseek-chat	\N	2025-10-25 10:54:37.638797+00
+827bf45d-17b1-4e32-bd3a-2ec6618bee90	d0dc5f50-ebd4-437b-9132-e45405313f99	f6979247-726b-487c-8b13-ef5e1ae056d9	user	площадь  руанды	deepseek-chat	\N	2025-10-25 11:08:05.47+00
+c258de48-0e32-40a3-a6f8-0042baed1b39	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	площадь руанды	deepseek-chat	\N	2025-10-25 11:09:04.88+00
+1b2e4e92-1063-47e5-8358-d228141482a2	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Конечно, вот информация о площади Руанды.\n\n**Площадь Руанды составляет 26 338 км².**\n\nЧтобы лучше понять этот размер, вот несколько сравнений:\n\n*   Это чуть **меньше площади Армении** и чуть **больше площади Северной Македонии**.\n*   Среди стран мира Руанда занимает **144-е место** по площади (для сравнения, Россия больше Руанды примерно в 649 раз).\n*   На постсоветском пространстве с ней можно сравнить, например, **Молдову** (33 846 км²).\n\n**Важный контекст:**\n\nНесмотря на небольшую территорию, Руанда является одной из самых густонаселенных стран Африки. Плотность населения здесь очень высокая, что связано с холмистым рельефом страны, который традиционно интенсивно используется для сельского хозяйства (из-за чего Руанду часто называют «Страной тысячи холмов»).\n\nТаким образом, **26 338 квадратных километров** — это официальная площадь Руанды.	deepseek-chat	\N	2025-10-25 11:09:15.143925+00
+11343b18-6157-4ffa-8748-133af99cf827	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	она больше или меньше площади юар	deepseek-chat	\N	2025-10-25 11:09:29.829+00
+5cf33bf4-9aae-49a5-afe7-26e1a455dbaa	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	она больше или меньше площади юар	deepseek-chat	\N	2025-10-25 11:12:20.339+00
+12160a86-6026-455b-8683-4a2f563fa81f	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Руанда **значительно меньше** по площади, чем Южно-Африканская Республика (ЮАР).\n\n**Для сравнения:**\n\n*   **Площадь Руанды:** ≈ 26 338 км²\n*   **Площадь ЮАР:** ≈ 1 219 090 км²\n\n**ЮАР больше Руанды примерно в 46 раз.**\n\nЧтобы было нагляднее: на территории ЮАР можно было бы разместить около **46 таких стран, как Руанда**.	deepseek-chat	\N	2025-10-25 11:12:27.07033+00
+6856f380-7465-4610-be56-34102758665c	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какая страна самая большая в африке	deepseek-chat	\N	2025-10-25 11:13:00.102+00
+0f308584-09fd-464f-a988-496d6470f4a7	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	вапвап	deepseek-chat	\N	2025-10-25 11:14:08.323+00
+361f5c25-caae-494e-a450-f8ecb44317a6	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какая страна самая большая в африке	deepseek-chat	\N	2025-10-25 11:16:28.448+00
+9caa5610-175a-4cd0-a43f-fd08b771ec81	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Самой большой страной в Африке является **Алжир**.\n\n**Площадь Алжира:** около **2 381 741 км²**.\n\nОн не только самая большая страна в Африке, но и **десятая по площади в мире**.\n\nДля сравнения с ранее упомянутыми странами:\n*   Алжир **больше Руанды** примерно в **90 раз**.\n*   Алжир почти **вдвое больше ЮАР**.	deepseek-chat	\N	2025-10-25 11:16:35.091263+00
+513dfa90-8415-468c-a439-45ea5390b04c	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	а вторая по размеру	gemini-2.5-flash	\N	2025-10-25 11:16:52.668+00
+1109226d-d2e2-4a43-8f62-740a58e1e787	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Второй по величине страной в Африке является **Демократическая Республика Конго (ДРК)**.\n\nЕё площадь составляет около **2 344 858 км²**.\n\nОна лишь немного уступает Алжиру по размеру, и вместе они значительно превосходят все остальные страны континента. ДРК также является 11-й по площади страной в мире.	gemini-2.5-flash	\N	2025-10-25 11:16:56.992875+00
+661a3dcc-6c9c-4777-9111-1f242fa77568	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какая третья	deepseek-chat	\N	2025-10-25 11:19:39.36+00
+d7669807-e1a3-4956-8aa4-ec75e752a8f5	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Третьей по величине страной в Африке является **Судан**.\n\n**Площадь Судана:** около **1 886 068 км²**.\n\nПосле разделения страны в 2011 году на Судан и Южный Судан, именно Судан сохранил за собой позицию третьей по площади страны на континенте.\n\n**Итак, тройка крупнейших стран Африки:**\n1.  **Алжир** (~2,38 млн км²)\n2.  **ДР Конго** (~2,34 млн км²)\n3.  **Судан** (~1,89 млн км²)	deepseek-chat	\N	2025-10-25 11:19:46.238596+00
+3d006a41-c747-40ea-9359-cd859883f22d	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	а четвертая	gemini-2.5-flash	\N	2025-10-25 11:20:11.614+00
+a26c80e0-ba34-4dd8-9ad9-62e8ff32a117	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	составь список из 5 стран	deepseek-chat	\N	2025-10-25 11:36:42.302+00
+13a0c581-22c8-4b5e-a87a-244d24d9289f	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сведи в таблицу 5 стран из африки и 5 стран из европы	deepseek-chat	\N	2025-10-25 11:37:09.746+00
+1e34b177-8334-48d8-84b6-0f138f3fc959	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Конечно, вот сравнительная таблица 5 крупнейших стран Африки и 5 крупнейших стран Европы по площади.\n\n### Сравнение площадей стран Африки и Европы\n\n| Место | Страна (Африка) | Площадь (км²) | Страна (Европа) | Площадь (км²) |\n| :---: | :--- | :--- | :--- | :--- |\n| 1 | **Алжир** | ~2 381 741 | **Россия** (европейская часть) | ~3 995 200 |\n| 2 | **ДР Конго** | ~2 344 858 | **Украина** | ~603 550 |\n| 3 | **Судан** | ~1 886 068 | **Франция** | ~643 801 |\n| 4 | **Ливия** | ~1 759 540 | **Испания** | ~505 990 |\n| 5 | **Чад** | ~1 284 000 | **Швеция** | ~450 295 |\n\n---\n\n**Важное примечание:**\n*   Для России указана площадь только её европейской части. Общая площадь России (17,1 млн км²) является самой большой в мире, но большая часть территории находится в Азии.\n*   Площади стран приведены приблизительно, так как данные в разных источниках могут незначительно отличаться.\n\nКак наглядно видно из таблицы, даже крупнейшие страны Европы (за исключением европейской части России) уступают по размеру крупнейшим странам Африки.	deepseek-chat	\N	2025-10-25 11:37:25.502146+00
+721da9d9-8f69-485f-8776-68f9e54e0dfd	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сделай это в виде таблицы, а не списка	deepseek-chat	\N	2025-10-25 11:37:53.415+00
+a99d067a-145d-44c9-b9f3-6b309ca9c17f	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Конечно, вот таблица с пятью крупнейшими странами Африки и Европы по площади.\n\n### Крупнейшие страны Африки и Европы по площади\n\n| Ранг | Африка                | Площадь (км²)   | Европа                       | Площадь (км²)   |\n| :--- | :-------------------- | :-------------- | :--------------------------- | :-------------- |\n| 1    | **Алжир**             | ~2 381 741      | **Россия** (европ. часть)    | ~3 995 200      |\n| 2    | **Дем. Респ. Конго**  | ~2 344 858      | **Украина**                  | ~603 550        |\n| 3    | **Судан**             | ~1 886 068      | **Франция**                  | ~643 801        |\n| 4    | **Ливия**             | ~1 759 540      | **Испания**                  | ~505 990        |\n| 5    | **Чад**               | ~1 284 000      | **Швеция**                   | ~450 295        |\n\n**Примечание:** Для России указана площадь только её европейской части. Общая площадь России является крупнейшей в мире и составляет ~17,1 млн км², но большая часть территории находится в Азии.	deepseek-chat	\N	2025-10-25 11:38:07.269637+00
+31639d0b-8dcb-4d6b-870b-8be863637f25	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	выдай ответ именно в виде таблицы	gemini-2.5-flash	\N	2025-10-25 12:55:35.311+00
+cad77ede-5c7e-43c9-bedc-b9f13db10c9c	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Вот, пожалуйста, информация в виде таблицы:\n\n### Крупнейшие страны Африки и Европы по площади\n\n| Ранг | Страна (Африка)        | Площадь (км²)   | Страна (Европа)              | Площадь (км²)   |\n| :--- | :--------------------- | :-------------- | :--------------------------- | :-------------- |\n| 1    | **Алжир**              | ~2 381 741      | **Россия** (европ. часть)    | ~3 995 200      |\n| 2    | **Демократическая Республика Конго** | ~2 344 858      | **Украина**                  | ~603 550        |\n| 3    | **Судан**              | ~1 886 068      | **Франция**                  | ~643 801        |\n| 4    | **Ливия**              | ~1 759 540      | **Испания**                  | ~505 990        |\n| 5    | **Чад**                | ~1 284 000      | **Швеция**                   | ~450 295        |\n\n**Примечание:** Для России указана площадь только её европейской части. Общая площадь России (~17,1 млн км²) является крупнейшей в мире, но большая часть её территории находится в Азии.	gemini-2.5-flash	\N	2025-10-25 12:55:39.266638+00
+a8640f88-6b47-487d-b9fb-45de277202b9	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	user	выдай ответ именно в виде таблицы	gemini-2.5-pro	\N	2025-10-25 12:55:53.01+00
+21f334fc-e0c6-4f92-aa9c-282cdadce602	b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Конечно, вот ответ в виде таблицы.\n\n### Крупнейшие страны Африки и Европы по площади\n\n| Ранг | Страна (Африка)        | Площадь (км²) | Страна (Европа)           | Площадь (км²) |\n| :--- | :--------------------- | :------------ | :------------------------ | :------------ |\n| 1    | **Алжир**              | ~2 381 741    | **Россия (европ. часть)** | ~3 995 200    |\n| 2    | **Дем. Респ. Конго**   | ~2 344 858    | **Украина**               | ~603 550      |\n| 3    | **Судан**              | ~1 886 068    | **Франция**               | ~643 801      |\n| 4    | **Ливия**              | ~1 759 540    | **Испания**               | ~505 990      |\n| 5    | **Чад**                | ~1 284 000    | **Швеция**                | ~450 295      |\n\n**Примечание:** Для России указана площадь только её европейской части. Общая площадь России (~17,1 млн км²) является крупнейшей в мире.	gemini-2.5-pro	\N	2025-10-25 12:56:03.782276+00
+40e978c4-a2c8-4ead-a3be-210230c0646d	5c79d89f-d09c-4576-9ef3-3e381515879b	f6979247-726b-487c-8b13-ef5e1ae056d9	user	площадь румынии	deepseek-chat	\N	2025-10-25 13:29:24.66+00
+468c5911-2460-4e9a-966c-5d81fec8f517	5c79d89f-d09c-4576-9ef3-3e381515879b	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Конечно, вот информация о площади Румынии:\n\n**Общая площадь:** **238 397 км²**\n\nЭто значение ставит Румынию на следующие позиции:\n\n*   **12-е место** по площади среди стран Европы (без учета России и Турции, которые частично в Азии).\n*   **81-е место** в мире.\n\nДля лучшего понимания масштаба:\n\n*   **Территориальное деление:** Площадь Румынии состоит из:\n    *   **Суша:** 231 231 км²\n    *   **Водная поверхность:** 7 166 км² (включая дельту Дуная, озера и водохранилища).\n*   **Сравнение:** По площади Румыния примерно сопоставима с Великобританией (242 495 км²) или с американским штатом Орегон (254 806 км²).\n\nТаким образом, **площадь Румынии составляет 238 397 квадратных километров**.	deepseek-chat	\N	2025-10-25 13:29:35.268429+00
+5a3a9a5e-88f1-4fc5-8a46-b34677e87262	5c79d89f-d09c-4576-9ef3-3e381515879b	f6979247-726b-487c-8b13-ef5e1ae056d9	user	площадь германии	gpt-5-mini	\N	2025-10-25 13:29:52.515+00
+8a5f3345-c1c2-49eb-9e07-71751b638ad0	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	приведи список 5 самых больших стран азии и африки	grok-4-fast	\N	2025-10-25 14:26:55.349+00
+e612db7e-97fa-4727-9ba5-996e818ba04c	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	приведи список 5 самых больших стран азии и африки	grok-4-fast	\N	2025-10-25 14:29:46.28+00
+bdcf8fdd-85da-448f-8e62-4b728e445da2	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	### 5 самых больших стран Азии по площади (в км², приблизительно)\n\n1. **Россия** — 17 098 242 км² (большая часть территории в Азии).\n2. **Китай** — 9 596 961 км².\n3. **Индия** — 3 287 263 км².\n4. **Казахстан** — 2 724 900 км².\n5. **Саудовская Аравия** — 2 149 690 км².\n\n### 5 самых больших стран Африки по площади (в км², приблизительно)\n\n1. **Алжир** — 2 381 741 км².\n2. **Демократическая Республика Конго** — 2 344 858 км².\n3. **Судан** — 1 861 484 км².\n4. **Ливия** — 1 759 540 км².\n5. **Чад** — 1 284 000 км².\n\n*Примечание: Данные основаны на стандартных географических источниках (например, ООН). Площади могут слегка варьироваться в зависимости от источника и учета территорий.*	grok-4-fast	\N	2025-10-25 14:29:50.79593+00
+5a5fb173-2bb5-4bb2-8f9d-e887cefe69dc	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сделай график динамики населения в алжире за последниение 50 лет	grok-4-fast	\N	2025-10-25 15:47:35.823+00
+c2b44394-f896-4f09-a3f7-10bb57f062dd	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сделай график динамики населения в алжире за последниение 50 лет	grok-4-fast	\N	2025-10-25 16:40:07.581+00
+d6d7d46e-9351-47a7-b7a0-b9e8f46329a0	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сделай график динамики населения в алжире за последниение 50 лет	grok-4-fast	\N	2025-10-25 16:41:45.778+00
+0ba628c3-7325-49b3-a34e-0ac2e46dd764	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	приведи список 5 самых больших стран азии и африки	grok-4-fast	\N	2025-10-25 16:42:24.892+00
 \.
 
 
@@ -3984,28 +4243,53 @@ ff6ccaad-7aec-4cd4-810d-4d0fa246cd0b	25aa2208-f658-420d-b9ec-87cb57ffae80	f69792
 -- Data for Name: usage_logs; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.usage_logs (id, user_id, conversation_id, model, prompt_tokens, completion_tokens, total_tokens, status, created_at) FROM stdin;
-7b0a4654-48fe-4ade-96f0-f577cadb6855	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	faea5156-e5c1-40e3-8739-26faa40fced6	deepseek-chat	20	1202	1222	success	2025-10-24 13:14:53.478314+00
-b8e21351-9f29-42fe-8653-45c3123b8a79	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	faea5156-e5c1-40e3-8739-26faa40fced6	deepseek-chat	1245	470	1715	success	2025-10-24 13:50:52.384021+00
-cdac1155-6c56-4363-9be5-c28e4cb6c4c8	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	4bbdb8f4-bc3c-4c72-bf63-69562a103265	gpt-4o	0	0	0	error	2025-10-24 13:56:30.969754+00
-a758e627-1ea9-4d8a-9fde-d118c2f748f8	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-1.5-pro-latest	0	0	0	error	2025-10-24 14:04:18.86939+00
-f342ba85-ee3a-46ce-9959-69736c89df5e	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-1.5-pro-latest	0	0	0	error	2025-10-24 14:04:28.267592+00
-94b958c2-1680-49f4-906b-78d63608377c	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-pro	0	0	0	error	2025-10-24 14:08:08.838979+00
-a83f37ae-59a4-4656-82e3-32f3e5f38902	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-pro	0	0	0	error	2025-10-24 14:08:14.391458+00
-c918fc4a-f482-4891-a9b5-5558fdc166e5	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-pro	0	0	0	error	2025-10-24 14:15:44.504888+00
-197ed174-4e6d-4acc-9133-cc1077907083	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-pro	0	0	0	error	2025-10-24 14:22:48.133968+00
-0d88e726-58bf-4a15-a704-72934eb50353	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-pro	0	0	0	error	2025-10-24 14:34:18.241699+00
-fbb50e8a-e549-4057-bc1d-74a9c10b07e2	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-pro	0	0	0	error	2025-10-24 14:34:26.490876+00
-94f040eb-ab32-4904-8298-60e74b21200e	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	gemini-pro	0	0	0	error	2025-10-24 14:36:10.84518+00
-3eb0e04d-73ae-4f4a-beba-1dbe35a01c42	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	bfae7390-9585-4f80-9a86-cd0b4bfc71af	gemini-pro	0	0	0	error	2025-10-24 14:36:46.71618+00
-0be30a22-8913-4f59-adb1-781f814cc8d9	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	56f22c71-19d0-4b79-8c1e-10cf4818750b	deepseek-chat	210	841	1051	success	2025-10-24 14:36:57.377263+00
-6faea5d8-0af3-4eaf-8370-8cbf00109416	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	bfae7390-9585-4f80-9a86-cd0b4bfc71af	deepseek-chat	42	960	1002	success	2025-10-24 14:45:07.130672+00
-2afed444-db02-47c9-9e92-041adbf90271	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	cf1044e5-86f4-4219-946a-0f465eac6efa	gemini-1.5-pro-latest	0	0	0	error	2025-10-24 14:45:22.182026+00
-20c4aaa1-4739-4d67-8c8a-72be2b96b047	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	98d56c20-4f57-4221-8b9a-3451d56f82ea	gemini-2.5-flash	6	1450	1456	success	2025-10-24 14:51:24.199784+00
-ebb3e3d9-4a7d-4537-aef0-e2841bec1c53	f6979247-726b-487c-8b13-ef5e1ae056d9	25aa2208-f658-420d-b9ec-87cb57ffae80	gemini-2.5-flash	18	4875	4893	success	2025-10-25 07:22:48.374933+00
-d3da576c-ec75-46f8-a0be-1b532c930f5f	f6979247-726b-487c-8b13-ef5e1ae056d9	25aa2208-f658-420d-b9ec-87cb57ffae80	gemini-2.5-flash	4915	236	5151	success	2025-10-25 07:25:44.808168+00
-6080473d-9066-4e69-89a1-e139e378227e	f6979247-726b-487c-8b13-ef5e1ae056d9	25aa2208-f658-420d-b9ec-87cb57ffae80	gemini-2.5-flash	5175	524	5699	success	2025-10-25 07:27:27.100839+00
-480ee700-8f64-46f1-b81e-60a45d834287	f6979247-726b-487c-8b13-ef5e1ae056d9	25aa2208-f658-420d-b9ec-87cb57ffae80	gemini-2.5-flash	5723	1087	6810	success	2025-10-25 07:30:35.25149+00
+COPY public.usage_logs (id, user_id, model, prompt_tokens, completion_tokens, total_tokens, status, created_at, error_details, message_id) FROM stdin;
+7b0a4654-48fe-4ade-96f0-f577cadb6855	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	deepseek-chat	20	1202	1222	success	2025-10-24 13:14:53.478314+00	\N	\N
+b8e21351-9f29-42fe-8653-45c3123b8a79	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	deepseek-chat	1245	470	1715	success	2025-10-24 13:50:52.384021+00	\N	\N
+cdac1155-6c56-4363-9be5-c28e4cb6c4c8	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gpt-4o	0	0	0	error	2025-10-24 13:56:30.969754+00	\N	\N
+a758e627-1ea9-4d8a-9fde-d118c2f748f8	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-1.5-pro-latest	0	0	0	error	2025-10-24 14:04:18.86939+00	\N	\N
+f342ba85-ee3a-46ce-9959-69736c89df5e	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-1.5-pro-latest	0	0	0	error	2025-10-24 14:04:28.267592+00	\N	\N
+94b958c2-1680-49f4-906b-78d63608377c	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:08:08.838979+00	\N	\N
+a83f37ae-59a4-4656-82e3-32f3e5f38902	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:08:14.391458+00	\N	\N
+c918fc4a-f482-4891-a9b5-5558fdc166e5	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:15:44.504888+00	\N	\N
+197ed174-4e6d-4acc-9133-cc1077907083	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:22:48.133968+00	\N	\N
+0d88e726-58bf-4a15-a704-72934eb50353	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:34:18.241699+00	\N	\N
+fbb50e8a-e549-4057-bc1d-74a9c10b07e2	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:34:26.490876+00	\N	\N
+94f040eb-ab32-4904-8298-60e74b21200e	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:36:10.84518+00	\N	\N
+3eb0e04d-73ae-4f4a-beba-1dbe35a01c42	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-pro	0	0	0	error	2025-10-24 14:36:46.71618+00	\N	\N
+0be30a22-8913-4f59-adb1-781f814cc8d9	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	deepseek-chat	210	841	1051	success	2025-10-24 14:36:57.377263+00	\N	\N
+6faea5d8-0af3-4eaf-8370-8cbf00109416	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	deepseek-chat	42	960	1002	success	2025-10-24 14:45:07.130672+00	\N	\N
+2afed444-db02-47c9-9e92-041adbf90271	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-1.5-pro-latest	0	0	0	error	2025-10-24 14:45:22.182026+00	\N	\N
+20c4aaa1-4739-4d67-8c8a-72be2b96b047	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	gemini-2.5-flash	6	1450	1456	success	2025-10-24 14:51:24.199784+00	\N	\N
+ebb3e3d9-4a7d-4537-aef0-e2841bec1c53	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	18	4875	4893	success	2025-10-25 07:22:48.374933+00	\N	\N
+d3da576c-ec75-46f8-a0be-1b532c930f5f	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	4915	236	5151	success	2025-10-25 07:25:44.808168+00	\N	\N
+6080473d-9066-4e69-89a1-e139e378227e	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	5175	524	5699	success	2025-10-25 07:27:27.100839+00	\N	\N
+480ee700-8f64-46f1-b81e-60a45d834287	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	5723	1087	6810	success	2025-10-25 07:30:35.25149+00	\N	\N
+4ce66e6d-ba49-4491-886d-5a6af0bc06de	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	deepseek-chat	9	511	520	success	2025-10-25 10:36:49.714868+00	\N	\N
+5ddad9bc-ed52-417d-b4ad-2f3e017785e9	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	7	43	50	success	2025-10-25 10:37:51.246357+00	\N	\N
+fe4bb178-4796-4676-9a63-cc0c18e50d84	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	0	0	0	error	2025-10-25 10:54:38.15811+00	\N	\N
+a5649378-7f5f-4cf2-9f6c-399e93d6565d	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	0	0	0	error	2025-10-25 11:08:05.127102+00	Дневной лимит запросов исчерпан.	\N
+1a4e55e0-94d3-495a-bf4d-52fc826684c6	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	10	240	250	success	2025-10-25 11:09:15.028558+00	\N	\N
+78a94f4a-a2b3-49be-95d5-6810c45df2af	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	0	0	0	error	2025-10-25 11:09:29.232967+00	Дневной лимит запросов исчерпан.	\N
+a09053e0-dab9-4f65-ba0f-54b5e9d8f044	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	269	111	380	success	2025-10-25 11:12:26.949172+00	\N	\N
+2d1bd0d0-f055-4f68-8684-05e57fbfe509	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	0	0	0	error	2025-10-25 11:13:00.766299+00	Дневной лимит запросов исчерпан.	\N
+066771da-9b6a-4dd8-8812-c363000d196d	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	0	0	0	error	2025-10-25 11:14:08.814686+00	Дневной лимит запросов исчерпан.	\N
+f731bc61-ca4f-4844-9906-e2b18229aa85	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	414	109	523	success	2025-10-25 11:16:34.980495+00	\N	\N
+21c41a0b-2ed9-4752-b648-2ee6eb0a0996	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	522	88	610	success	2025-10-25 11:16:56.823498+00	\N	\N
+554c75df-8f1b-4f1f-9302-429fd221f5bb	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	0	0	0	error	2025-10-25 11:17:29.668794+00	Дневной лимит запросов исчерпан.	\N
+08efd8d1-d8c9-4e3c-8b76-6ccef0ed6838	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	629	139	768	success	2025-10-25 11:19:46.111482+00	\N	\N
+7a1d61c3-c501-4337-a691-3861abe2936d	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	762	125	887	success	2025-10-25 11:20:15.015531+00	\N	\N
+38046711-f10d-4839-9b68-1d131641ff2e	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	0	0	0	error	2025-10-25 11:20:24.726873+00	Дневной лимит запросов исчерпан.	\N
+47185102-d657-4333-8e6b-4dfa7270a7e9	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	911	118	1029	success	2025-10-25 11:36:48.971699+00	\N	\N
+8b16d45c-e191-4c69-8302-7b879010a286	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	1054	368	1422	success	2025-10-25 11:37:25.381064+00	\N	\N
+c840dabe-0510-4a40-8b48-28a670f24c5b	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	1439	313	1752	success	2025-10-25 11:38:07.135171+00	\N	\N
+090448aa-2f46-413d-9651-7f889006cede	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	0	0	0	error	2025-10-25 11:38:15.870162+00	Дневной лимит запросов исчерпан.	\N
+1779035f-a0b5-4b33-93ae-4ecbd8fbfbd2	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-flash	1803	340	2143	success	2025-10-25 12:55:39.140393+00	\N	31639d0b-8dcb-4d6b-870b-8be863637f25
+adfa88b4-84dd-433e-8764-1433f235abd5	f6979247-726b-487c-8b13-ef5e1ae056d9	gemini-2.5-pro	2151	330	2481	success	2025-10-25 12:56:03.656284+00	\N	a8640f88-6b47-487d-b9fb-45de277202b9
+ac010f3d-be6f-46e7-bf53-59003ba7ecd1	f6979247-726b-487c-8b13-ef5e1ae056d9	deepseek-chat	10	222	232	success	2025-10-25 13:29:35.142828+00	\N	40e978c4-a2c8-4ead-a3be-210230c0646d
+3d2c137c-86f1-4103-91f3-8d721fa33c0c	f6979247-726b-487c-8b13-ef5e1ae056d9	gpt-5-mini	0	0	0	error	2025-10-25 13:29:53.470116+00	OpenAI API error: 429	5a3a9a5e-88f1-4fc5-8a46-b34677e87262
+f37119df-7db2-4390-bfca-824959384ed6	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	0	0	0	error	2025-10-25 14:26:55.508293+00	Дневной лимит запросов исчерпан.	8a5f3345-c1c2-49eb-9e07-71751b638ad0
+3446e440-1978-4c32-a00c-bb7a03eeb6a4	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	184	260	1036	success	2025-10-25 14:29:50.672606+00	\N	e612db7e-97fa-4727-9ba5-996e818ba04c
 \.
 
 
@@ -4013,9 +4297,9 @@ d3da576c-ec75-46f8-a0be-1b532c930f5f	f6979247-726b-487c-8b13-ef5e1ae056d9	25aa22
 -- Data for Name: user_profiles; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.user_profiles (id, email, daily_request_limit, daily_request_limit_enabled, monthly_request_limit, monthly_request_limit_enabled, daily_token_limit, daily_token_limit_enabled, monthly_token_limit, monthly_token_limit_enabled, created_at, updated_at, role) FROM stdin;
-f6979247-726b-487c-8b13-ef5e1ae056d9	mosgate@gmail.com	100	t	3000	t	100000	t	3000000	t	2025-10-25 07:20:34.044915+00	2025-10-25 07:20:34.044915+00	user
-8537c87c-44d7-450e-b1b0-498ae7ddd3f6	eugsu10@gmail.com	100	t	3000	t	100000	t	3000000	t	2025-10-24 13:09:54.861618+00	2025-10-25 09:43:28.712129+00	admin
+COPY public.user_profiles (id, email, daily_request_limit, created_at, updated_at, role) FROM stdin;
+8537c87c-44d7-450e-b1b0-498ae7ddd3f6	eugsu10@gmail.com	100	2025-10-24 13:09:54.861618+00	2025-10-25 09:43:28.712129+00	admin
+f6979247-726b-487c-8b13-ef5e1ae056d9	mosgate@gmail.com	35	2025-10-25 07:20:34.044915+00	2025-10-25 16:40:45.614831+00	user
 \.
 
 
@@ -4230,7 +4514,7 @@ COPY vault.secrets (id, name, description, secret, key_id, nonce, created_at, up
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: supabase_auth_admin
 --
 
-SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 18, true);
+SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 35, true);
 
 
 --
@@ -5271,11 +5555,11 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- Name: usage_logs usage_logs_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: usage_logs usage_logs_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.usage_logs
-    ADD CONSTRAINT usage_logs_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id) ON DELETE SET NULL;
+    ADD CONSTRAINT usage_logs_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.messages(id) ON DELETE SET NULL;
 
 
 --
@@ -6904,5 +7188,5 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict HZj5U3eiiVjRR7sZf5BxypE7VqSiu3DtBeeYilQVVtExEqwYK9pIs5LCB6FxgmX
+\unrestrict kYTtQbhpxxNsFF7V6dAe0SezXYAgqGvbyUovYSclyEieNVtzoznBfHIkIBnPP7s
 

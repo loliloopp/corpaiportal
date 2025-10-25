@@ -89,3 +89,6 @@ dist-ssr
 
 # Local env
 .env.local
+
+# Local environment variables for proxy server
+/proxy/.env

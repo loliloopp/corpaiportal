@@ -34,6 +34,13 @@
 - **Environment Variables**: ТОЛЬКО `.env.local` файлы
 - **Стиль общения**: Писать только по делу, без лишних слов.
 
+## Database Migrations
+- **GRANT права**: При создании новых таблиц ВСЕГДА добавлять GRANT для `service_role`:
+  ```sql
+  CREATE TABLE public.my_table (id uuid PRIMARY KEY, ...);
+  GRANT SELECT, INSERT, UPDATE, DELETE ON public.my_table TO service_role;
+  ```
+
 ## Plan Mode Requirements
 **ВАЖНО**: В режиме плана предоставлять ТОЛЬКО алгоритмы без примеров кода:
 - Текстовые описания шагов алгоритма

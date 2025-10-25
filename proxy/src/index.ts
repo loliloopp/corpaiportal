@@ -7,7 +7,7 @@ import axios from 'axios';
 dotenv.config();
 
 // Supabase client for server-side operations
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceRoleKey) {
@@ -15,6 +15,22 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+
+// Immediately test the service_role key on startup
+(async () => {
+    console.log('Testing Supabase connection with service_role key...');
+    const { data, error } = await supabase.from('user_profiles').select('*').limit(1);
+
+    if (error) {
+        console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+        console.error('!!! SUPABASE CONNECTION FAILED !!!');
+        console.error('!!! Error fetching user_profiles:', error.message);
+        console.error('!!! This almost certainly means your SUPABASE_SERVICE_ROLE_KEY is incorrect in .env');
+        console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    } else {
+        console.log('>>> Supabase connection successful. service_role key is working.');
+    }
+})();
 
 
 const app = express();
@@ -35,22 +51,50 @@ const AI_PROVIDERS_CONFIG: Record<string, { provider: string, url: string, apiKe
 
 // Main chat proxy endpoint
 app.post('/api/v1/chat', async (req: Request, res: Response) => {
-    const { model, messages, jwt } = req.body;
+    const { model, messages, jwt, conversationId: initialConversationId } = req.body;
 
     if (!model || !messages || !jwt) {
         return res.status(400).json({ error: 'Missing model, messages, or jwt in request body.' });
     }
 
     try {
-        // 1. Authenticate user with JWT
+        // 1. Authenticate user
         const { data: { user }, error: userError } = await supabase.auth.getUser(jwt);
         if (userError || !user) {
             return res.status(401).json({ error: 'Invalid JWT. Authentication failed.' });
         }
+        
+        let conversationId = initialConversationId;
+        const userMessageContent = messages[messages.length - 1].content;
 
-        // 2. Check user's daily request limit
+        // 2. Create conversation if it's a new one
+        if (!conversationId) {
+            const { data: newConversation, error: convError } = await supabase
+                .from('conversations')
+                .insert({ user_id: user.id, title: userMessageContent.substring(0, 50) })
+                .select()
+                .single();
+            if (convError) throw convError;
+            conversationId = newConversation.id;
+        }
+
+        // 3. Save user message
+        const { data: savedUserMessage, error: userMessageError } = await supabase
+            .from('messages')
+            .insert({
+                conversation_id: conversationId,
+                user_id: user.id,
+                role: 'user',
+                content: userMessageContent,
+                model: model,
+            })
+            .select()
+            .single();
+        if (userMessageError) throw userMessageError;
+
+
+        // 4. Check limits (now that we have a user)
         const { data: usageData, error: usageError } = await supabase.rpc('get_user_usage_stats', { p_user_id: user.id });
-
         if (usageError) throw new Error(usageError.message);
         if (usageData.usage >= usageData.limit) {
             return res.status(429).json({ error: 'Дневной лимит запросов исчерпан.' });
@@ -84,10 +128,22 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             };
         }
 
-        // 3. Forward request to the appropriate AI provider
+        // 5. Forward to AI provider
         const aiResponse = await axios.post(providerConfig.url, requestBody, { headers });
+        const aiMessageContent = providerConfig.provider === 'gemini'
+            ? aiResponse.data.candidates[0].content.parts[0].text
+            : aiResponse.data.choices[0].message.content;
 
-        // 4. Log usage
+        // 6. Save AI message
+        await supabase.from('messages').insert({
+            conversation_id: conversationId,
+            user_id: user.id,
+            role: 'assistant',
+            content: aiMessageContent,
+            model: model,
+        });
+
+        // 7. Log usage
         const usage = providerConfig.provider === 'gemini' 
             ? aiResponse.data.usageMetadata 
             : aiResponse.data.usage;
@@ -101,22 +157,24 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             status: 'success',
         };
 
-        const { error: logError } = await supabase.from('usage_logs').insert([logData]);
+        const { error: logError } = await supabase.from('usage_logs').insert([{
+             ...logData,
+             message_id: savedUserMessage.id, // Critical fix
+        }]);
 
         if (logError) {
             // Log the error but don't block the user response
             console.error('Failed to log usage:', logError);
         }
 
-        res.status(200).json(aiResponse.data);
+        res.status(200).json({
+            ...aiResponse.data,
+            // Return conversationId so frontend knows it if it was created
+            conversationId: conversationId,
+        });
     } catch (error: any) {
         // Also log errors from AI providers
         console.error('Error in chat proxy:', error.response ? error.response.data : error.message);
-
-        // Attempt to log the failed request
-        // You would need to get the user ID from JWT even on failure
-        // For simplicity, we are skipping detailed error logging for now.
-        
         res.status(error.response?.status || 500).json({ error: error.response?.data?.error || error.message });
     }
 });

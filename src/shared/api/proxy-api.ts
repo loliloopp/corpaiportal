@@ -5,7 +5,7 @@ interface Message {
     content: string;
 }
 
-export const sendAIRequest = async (model: string, messages: Message[]) => {
+export const sendAIRequest = async (model: string, messages: Message[], conversationId: string | null) => {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError || !session) {
@@ -21,6 +21,7 @@ export const sendAIRequest = async (model: string, messages: Message[]) => {
             model,
             messages,
             jwt: session.access_token,
+            conversationId,
         }),
     });
 
