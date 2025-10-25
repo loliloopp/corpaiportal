@@ -29,11 +29,20 @@ export const getUserMessageHistory = async (userId: string, period: 'day' | 'wee
     return data;
 }
 
+export const getUserModelUsageStats = async (userId: string, period: 'day' | 'week' | 'month') => {
+    const { data, error } = await supabase.rpc('get_user_model_usage_stats', { 
+        p_user_id: userId, 
+        period 
+    });
+    if (error) throw error;
+    return data;
+}
+
 // We can reuse the one from users-api, but for consistency let's have it here too.
 export const getAllUsersForStats = async () => {
     const { data, error } = await supabase
         .from('user_profiles')
-        .select('id, email');
+        .select('id, email, display_name');
     if (error) throw error;
     return data;
 }

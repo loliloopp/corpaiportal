@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict kYTtQbhpxxNsFF7V6dAe0SezXYAgqGvbyUovYSclyEieNVtzoznBfHIkIBnPP7s
+\restrict nlLGEwCqbrCXZuUY2WQdOS12lDh2XaSAvLP2NhoAbKmwf8TUP0TkwIRBkggxoJK
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.6
@@ -850,18 +850,18 @@ DECLARE
     total_requests BIGINT;
     weekly_requests BIGINT;
 BEGIN
-    -- Get total requests
+    -- Get total successful requests
     SELECT count(*)
     INTO total_requests
-    FROM public.messages
-    WHERE user_id = p_user_id AND role = 'user';
+    FROM public.usage_logs
+    WHERE user_id = p_user_id AND status = 'success';
 
-    -- Get weekly requests
+    -- Get weekly successful requests
     SELECT count(*)
     INTO weekly_requests
-    FROM public.messages
+    FROM public.usage_logs
     WHERE user_id = p_user_id 
-      AND role = 'user'
+      AND status = 'success'
       AND created_at >= date_trunc('week', now() at time zone 'utc');
 
     SELECT json_build_object(
@@ -925,17 +925,23 @@ CREATE FUNCTION public.get_model_usage_stats(period text) RETURNS json
 DECLARE
     result json;
 BEGIN
-    SELECT json_agg(t)
-    INTO result
-    FROM (
-        SELECT
+    SELECT json_agg(t) INTO result FROM (
+        SELECT 
             model,
-            count(*) AS total_requests,
-            sum(total_tokens) AS total_tokens
+            COALESCE(COUNT(*), 0) AS total_requests,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens
         FROM public.usage_logs
-        WHERE status = 'success' AND created_at >= date_trunc(period, now() at time zone 'utc')
-        GROUP BY 1
-        ORDER BY 1
+        WHERE status = 'success'
+          AND created_at >= (
+            CASE 
+              WHEN period = 'day' THEN date_trunc('day', now() at time zone 'utc')
+              WHEN period = 'week' THEN date_trunc('week', now() at time zone 'utc')
+              WHEN period = 'month' THEN now() at time zone 'utc' - interval '29 days'
+              ELSE date_trunc('day', now() at time zone 'utc')
+            END
+          )
+        GROUP BY model
+        ORDER BY total_requests DESC
     ) t;
     RETURN result;
 END;
@@ -953,47 +959,93 @@ CREATE FUNCTION public.get_user_message_history(p_user_id uuid, period text, p_p
     AS $$
 DECLARE
     result json;
-    total_count BIGINT;
-    offset_val INT;
+    v_total_count INTEGER;
 BEGIN
-    offset_val := (p_page_number - 1) * p_page_size;
-
-    -- Get total count first
-    SELECT count(*)
-    INTO total_count
-    FROM public.messages m
-    WHERE m.user_id = p_user_id 
-      AND m.role = 'user'
-      AND m.created_at >= date_trunc(period, now() at time zone 'utc');
-
-    -- Then get paginated data
+    -- Calculate total count
+    SELECT COUNT(*)
+    INTO v_total_count
+    FROM public.usage_logs
+    WHERE user_id = p_user_id
+      AND status = 'success'
+      AND created_at >= (
+        CASE 
+          WHEN period = 'day' THEN date_trunc('day', now() at time zone 'utc')
+          WHEN period = 'week' THEN date_trunc('week', now() at time zone 'utc')
+          WHEN period = 'month' THEN now() at time zone 'utc' - interval '29 days'
+          ELSE date_trunc('day', now() at time zone 'utc')
+        END
+      );
+    
+    -- Get paginated data
     SELECT json_build_object(
-        'total', total_count,
-        'data', COALESCE(json_agg(t), '[]'::json)
-    )
-    INTO result
+        'data', COALESCE(json_agg(row_to_json(t)), '[]'::json),
+        'total', v_total_count
+    ) INTO result
     FROM (
         SELECT 
-            to_char(m.created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at,
+            ul.created_at,
             m.content,
-            m.model,
+            ul.model,
             ul.total_tokens
-        FROM public.messages m
-        LEFT JOIN public.usage_logs ul ON m.id = ul.message_id
-        WHERE m.user_id = p_user_id 
-          AND m.role = 'user'
-          AND m.created_at >= date_trunc(period, now() at time zone 'utc')
-        ORDER BY m.created_at DESC
-        LIMIT p_page_size
-        OFFSET offset_val
+        FROM public.usage_logs ul
+        JOIN public.messages m ON ul.message_id = m.id
+        WHERE ul.user_id = p_user_id
+          AND ul.status = 'success'
+          AND ul.created_at >= (
+            CASE 
+              WHEN period = 'day' THEN date_trunc('day', now() at time zone 'utc')
+              WHEN period = 'week' THEN date_trunc('week', now() at time zone 'utc')
+              WHEN period = 'month' THEN now() at time zone 'utc' - interval '29 days'
+              ELSE date_trunc('day', now() at time zone 'utc')
+            END
+          )
+        ORDER BY ul.created_at DESC
+        LIMIT p_page_size OFFSET (p_page_number - 1) * p_page_size
     ) t;
-
+    
     RETURN result;
 END;
 $$;
 
 
 ALTER FUNCTION public.get_user_message_history(p_user_id uuid, period text, p_page_size integer, p_page_number integer) OWNER TO postgres;
+
+--
+-- Name: get_user_model_usage_stats(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_user_model_usage_stats(p_user_id uuid, period text) RETURNS json
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+    result json;
+BEGIN
+    SELECT json_agg(t) INTO result FROM (
+        SELECT 
+            model,
+            COALESCE(COUNT(*), 0) AS total_requests,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens
+        FROM public.usage_logs
+        WHERE user_id = p_user_id
+          AND status = 'success'
+          AND created_at >= (
+            CASE 
+              WHEN period = 'day' THEN date_trunc('day', now() at time zone 'utc')
+              WHEN period = 'week' THEN date_trunc('week', now() at time zone 'utc')
+              WHEN period = 'month' THEN now() at time zone 'utc' - interval '29 days'
+              ELSE date_trunc('day', now() at time zone 'utc')
+            END
+          )
+        GROUP BY model
+        ORDER BY total_requests DESC
+    ) t;
+    
+    RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_user_model_usage_stats(p_user_id uuid, period text) OWNER TO postgres;
 
 --
 -- Name: get_user_stats(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -1013,15 +1065,15 @@ BEGIN
             GROUP BY h ORDER BY h
         ) t;
     ELSIF period = 'week' THEN
-        SELECT json_agg(t) INTO result FROM (
+         SELECT json_agg(t) INTO result FROM (
             SELECT to_char(d, 'Day') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
             FROM generate_series(date_trunc('week', now()), date_trunc('week', now()) + interval '6 days', interval '1 day') d
             LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = d AND ul.user_id = p_user_id AND ul.status = 'success'
             GROUP BY d ORDER BY d
         ) t;
     ELSE -- month
-        SELECT json_agg(t) INTO result FROM (
-             SELECT to_char(d, 'MM-DD') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
+         SELECT json_agg(t) INTO result FROM (
+            SELECT to_char(d, 'MM-DD') AS date_trunc, COALESCE(count(ul.id), 0) AS total_requests, COALESCE(sum(ul.total_tokens), 0) AS total_tokens
             FROM generate_series(now() - interval '29 days', now(), interval '1 day') d
             LEFT JOIN public.usage_logs ul ON date_trunc('day', ul.created_at) = date_trunc('day', d) AND ul.user_id = p_user_id AND ul.status = 'success'
             GROUP BY 1 ORDER BY 1
@@ -1045,19 +1097,24 @@ DECLARE
     requests_count INT;
     requests_limit INT;
 BEGIN
-    -- Count user requests for today (UTC) from messages where the role is 'user'
+    -- Count user requests for today (UTC) from usage_logs where status is 'success'
+    -- This is more accurate as it only counts successful requests.
     SELECT COUNT(*)
     INTO requests_count
-    FROM public.messages
+    FROM public.usage_logs
     WHERE user_id = p_user_id
-      AND role = 'user'
+      AND status = 'success'
       AND created_at >= date_trunc('day', now() at time zone 'utc');
 
-    -- Get user's daily limit
-    SELECT daily_request_limit
+    -- Get user's daily limit, default to 0 if no profile is found
+    SELECT COALESCE(daily_request_limit, 0)
     INTO requests_limit
     FROM public.user_profiles
     WHERE id = p_user_id;
+
+    -- If no profile was found, the query above returns no rows, and requests_limit will be NULL.
+    -- We must handle this case and default to 0.
+    requests_limit := COALESCE(requests_limit, 0);
 
     -- Return result as JSON
     RETURN json_build_object(
@@ -1069,6 +1126,28 @@ $$;
 
 
 ALTER FUNCTION public.get_user_usage_stats(p_user_id uuid) OWNER TO postgres;
+
+--
+-- Name: handle_new_user(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.handle_new_user() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+begin
+  insert into public.user_profiles (id, email, display_name)
+  values (
+    new.id,
+    new.email,
+    new.raw_user_meta_data->>'display_name'
+  );
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION public.handle_new_user() OWNER TO postgres;
 
 --
 -- Name: handle_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3515,6 +3594,18 @@ COMMENT ON COLUMN public.messages.token_count IS 'Количество токе�
 
 
 --
+-- Name: test_table; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.test_table (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    content text
+);
+
+
+ALTER TABLE public.test_table OWNER TO postgres;
+
+--
 -- Name: usage_logs; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -3541,10 +3632,11 @@ ALTER TABLE public.usage_logs OWNER TO postgres;
 CREATE TABLE public.user_profiles (
     id uuid NOT NULL,
     email text,
-    daily_request_limit integer DEFAULT 100 NOT NULL,
+    daily_request_limit integer DEFAULT 20 NOT NULL,
     created_at timestamp(6) with time zone DEFAULT now() NOT NULL,
     updated_at timestamp(6) with time zone DEFAULT now() NOT NULL,
-    role public.user_role DEFAULT 'user'::public.user_role NOT NULL
+    role public.user_role DEFAULT 'user'::public.user_role NOT NULL,
+    display_name text
 );
 
 
@@ -3893,6 +3985,26 @@ COPY auth.audit_log_entries (instance_id, id, payload, created_at, ip_address) F
 00000000-0000-0000-0000-000000000000	f362aa45-ddf8-4659-b4dd-feaf6238ad95	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 16:39:49.499719+00	
 00000000-0000-0000-0000-000000000000	f00524cb-5353-4660-a05e-e0b4d817d0a0	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 16:40:34.309873+00	
 00000000-0000-0000-0000-000000000000	d3c0e23e-1e1b-47ca-b281-36c4375987e6	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 16:40:34.316234+00	
+00000000-0000-0000-0000-000000000000	b9bd4943-03ae-4fb6-9754-931a822d2772	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 17:39:06.633231+00	
+00000000-0000-0000-0000-000000000000	c63383a0-85b3-4eca-8292-df423acd8198	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 17:39:06.643541+00	
+00000000-0000-0000-0000-000000000000	aedaac1c-5230-471a-99b9-049cd0cc9364	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 20:16:34.090742+00	
+00000000-0000-0000-0000-000000000000	2dddb5d3-cc4b-444c-833a-4fb9880a2043	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 20:16:34.11765+00	
+00000000-0000-0000-0000-000000000000	cfb9bc76-8c1e-45a0-bef9-ebcdc89c77d2	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 20:24:20.75172+00	
+00000000-0000-0000-0000-000000000000	86dd5830-554d-4ddc-ba61-df6956e97c3f	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 20:24:20.755383+00	
+00000000-0000-0000-0000-000000000000	427628a9-b652-493b-8480-dcbe7083f5e2	{"action":"user_confirmation_requested","actor_id":"7963cb5d-b2be-41ca-b707-6b0f5d026d47","actor_username":"postoev.e.v@su10.ru","actor_via_sso":false,"log_type":"user","traits":{"provider":"email"}}	2025-10-25 21:06:37.477609+00	
+00000000-0000-0000-0000-000000000000	06cd2104-2175-44a1-ad2d-2862f72f29c0	{"action":"user_signedup","actor_id":"7963cb5d-b2be-41ca-b707-6b0f5d026d47","actor_username":"postoev.e.v@su10.ru","actor_via_sso":false,"log_type":"team","traits":{"provider":"email"}}	2025-10-25 21:07:02.89427+00	
+00000000-0000-0000-0000-000000000000	a9e8176d-f132-4978-9c61-dea30b3fde08	{"action":"login","actor_id":"7963cb5d-b2be-41ca-b707-6b0f5d026d47","actor_username":"postoev.e.v@su10.ru","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 21:08:49.369195+00	
+00000000-0000-0000-0000-000000000000	75fbdc83-79a6-4a34-8dbe-aacce3436ede	{"action":"user_deleted","actor_id":"00000000-0000-0000-0000-000000000000","actor_username":"service_role","actor_via_sso":false,"log_type":"team","traits":{"user_email":"postoev.e.v@su10.ru","user_id":"7963cb5d-b2be-41ca-b707-6b0f5d026d47","user_phone":""}}	2025-10-25 21:14:46.052653+00	
+00000000-0000-0000-0000-000000000000	65ad599b-c263-4b2d-a95c-d13056bc81f1	{"action":"user_confirmation_requested","actor_id":"b2d6be07-0f60-419e-a103-5f4767bc2736","actor_username":"postoev.e.v@mstroy.pro","actor_via_sso":false,"log_type":"user","traits":{"provider":"email"}}	2025-10-25 21:24:28.634807+00	
+00000000-0000-0000-0000-000000000000	57edae66-3859-4f69-ac2c-fe86e0344003	{"action":"user_signedup","actor_id":"b2d6be07-0f60-419e-a103-5f4767bc2736","actor_username":"postoev.e.v@mstroy.pro","actor_via_sso":false,"log_type":"team","traits":{"provider":"email"}}	2025-10-25 21:26:04.008058+00	
+00000000-0000-0000-0000-000000000000	9a7c3a2e-738c-4921-a2fd-66d292db51a8	{"action":"user_deleted","actor_id":"00000000-0000-0000-0000-000000000000","actor_username":"service_role","actor_via_sso":false,"log_type":"team","traits":{"user_email":"postoev.e.v@mstroy.pro","user_id":"b2d6be07-0f60-419e-a103-5f4767bc2736","user_phone":""}}	2025-10-25 21:28:26.926121+00	
+00000000-0000-0000-0000-000000000000	2d3c50a9-a7ea-4b50-8449-ee07b6e579e5	{"action":"user_confirmation_requested","actor_id":"b207c1f2-dd20-4e5d-b01f-59d972cec30e","actor_username":"postoev.e.v@su10.ru","actor_via_sso":false,"log_type":"user","traits":{"provider":"email"}}	2025-10-25 21:29:19.873218+00	
+00000000-0000-0000-0000-000000000000	8a1aa1f1-8c35-432f-bfb3-eeccac968e53	{"action":"user_signedup","actor_id":"b207c1f2-dd20-4e5d-b01f-59d972cec30e","actor_username":"postoev.e.v@su10.ru","actor_via_sso":false,"log_type":"team","traits":{"provider":"email"}}	2025-10-25 21:29:32.866601+00	
+00000000-0000-0000-0000-000000000000	f1c2299d-17b4-40ac-905f-a79a2a308cf7	{"action":"login","actor_id":"b207c1f2-dd20-4e5d-b01f-59d972cec30e","actor_username":"postoev.e.v@su10.ru","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-25 21:29:44.321042+00	
+00000000-0000-0000-0000-000000000000	871d7bc5-5f03-4303-98be-81ba0cb1d551	{"action":"token_refreshed","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 21:31:22.202529+00	
+00000000-0000-0000-0000-000000000000	4265e6d3-16b0-40f6-925a-c6e7a6f30ceb	{"action":"token_revoked","actor_id":"f6979247-726b-487c-8b13-ef5e1ae056d9","actor_username":"mosgate@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 21:31:22.203277+00	
+00000000-0000-0000-0000-000000000000	f97151cc-dda9-4dea-ae80-034f5bf29cc4	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 21:35:04.273438+00	
+00000000-0000-0000-0000-000000000000	a2b62758-dca2-4975-b9e6-6aa246f7f7a6	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-25 21:35:04.281719+00	
 \.
 
 
@@ -3911,6 +4023,7 @@ COPY auth.flow_state (id, user_id, auth_code, code_challenge_method, code_challe
 COPY auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at, id) FROM stdin;
 8537c87c-44d7-450e-b1b0-498ae7ddd3f6	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	{"sub": "8537c87c-44d7-450e-b1b0-498ae7ddd3f6", "email": "eugsu10@gmail.com", "email_verified": false, "phone_verified": false}	email	2025-10-23 13:36:30.702983+00	2025-10-23 13:36:30.703037+00	2025-10-23 13:36:30.703037+00	eae3d66b-929b-40e3-9d6c-268d56437705
 f6979247-726b-487c-8b13-ef5e1ae056d9	f6979247-726b-487c-8b13-ef5e1ae056d9	{"sub": "f6979247-726b-487c-8b13-ef5e1ae056d9", "email": "mosgate@gmail.com", "email_verified": true, "phone_verified": false}	email	2025-10-25 07:20:18.07625+00	2025-10-25 07:20:18.076303+00	2025-10-25 07:20:18.076303+00	f8ec2ba6-c73d-4a08-9ea9-b4f12db61e30
+b207c1f2-dd20-4e5d-b01f-59d972cec30e	b207c1f2-dd20-4e5d-b01f-59d972cec30e	{"sub": "b207c1f2-dd20-4e5d-b01f-59d972cec30e", "email": "postoev.e.v@su10.ru", "display_name": "Постоев", "email_verified": true, "phone_verified": false}	email	2025-10-25 21:29:19.870773+00	2025-10-25 21:29:19.870821+00	2025-10-25 21:29:19.870821+00	8f4d7e2e-d7df-42d0-a0b9-43eea0c7af1a
 \.
 
 
@@ -3929,6 +4042,8 @@ COPY auth.instances (id, uuid, raw_base_config, created_at, updated_at) FROM std
 COPY auth.mfa_amr_claims (session_id, created_at, updated_at, authentication_method, id) FROM stdin;
 aba75ce1-94ea-446d-8e18-4a611a0e1338	2025-10-25 10:47:29.012002+00	2025-10-25 10:47:29.012002+00	password	d91e6183-1b60-44c6-991c-3bef40df7209
 92bcc80a-6438-4e3e-a356-fa6bf8497706	2025-10-25 11:08:42.060774+00	2025-10-25 11:08:42.060774+00	password	b87e4c30-92cb-433e-8681-48c08e91e1c1
+3624e931-727c-432f-9e89-9cd69ad87d59	2025-10-25 21:29:32.878327+00	2025-10-25 21:29:32.878327+00	otp	457588fd-81ff-4983-bb40-341e74ec2163
+31d3ef55-1232-44b7-a4c9-68b837218c74	2025-10-25 21:29:44.325111+00	2025-10-25 21:29:44.325111+00	password	021ae397-b9f6-43ea-89ca-8a7b67fa4458
 \.
 
 
@@ -3993,9 +4108,16 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	29	cp3avyi74lkf	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 12:49:43.505395+00	2025-10-25 14:23:52.209374+00	wbdc4pr3afr4	aba75ce1-94ea-446d-8e18-4a611a0e1338
 00000000-0000-0000-0000-000000000000	31	ghdx45all7rz	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 14:07:17.454814+00	2025-10-25 15:16:47.47753+00	tlqh4lddkat4	92bcc80a-6438-4e3e-a356-fa6bf8497706
 00000000-0000-0000-0000-000000000000	33	qv2swa3ec4vb	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 15:16:47.492527+00	2025-10-25 16:39:49.502589+00	ghdx45all7rz	92bcc80a-6438-4e3e-a356-fa6bf8497706
-00000000-0000-0000-0000-000000000000	34	froeuve6j7yd	f6979247-726b-487c-8b13-ef5e1ae056d9	f	2025-10-25 16:39:49.518445+00	2025-10-25 16:39:49.518445+00	qv2swa3ec4vb	92bcc80a-6438-4e3e-a356-fa6bf8497706
 00000000-0000-0000-0000-000000000000	32	spma4gva3zqf	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 14:23:52.22737+00	2025-10-25 16:40:34.316926+00	cp3avyi74lkf	aba75ce1-94ea-446d-8e18-4a611a0e1338
-00000000-0000-0000-0000-000000000000	35	5mqvmzhsjse4	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-25 16:40:34.31787+00	2025-10-25 16:40:34.31787+00	spma4gva3zqf	aba75ce1-94ea-446d-8e18-4a611a0e1338
+00000000-0000-0000-0000-000000000000	34	froeuve6j7yd	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 16:39:49.518445+00	2025-10-25 17:39:06.64679+00	qv2swa3ec4vb	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	36	s7e6lnabjw7b	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 17:39:06.664245+00	2025-10-25 20:16:34.118896+00	froeuve6j7yd	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	35	5mqvmzhsjse4	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 16:40:34.31787+00	2025-10-25 20:24:20.756112+00	spma4gva3zqf	aba75ce1-94ea-446d-8e18-4a611a0e1338
+00000000-0000-0000-0000-000000000000	42	jh3u6hlflmax	b207c1f2-dd20-4e5d-b01f-59d972cec30e	f	2025-10-25 21:29:32.87233+00	2025-10-25 21:29:32.87233+00	\N	3624e931-727c-432f-9e89-9cd69ad87d59
+00000000-0000-0000-0000-000000000000	43	7jowdcmtwxad	b207c1f2-dd20-4e5d-b01f-59d972cec30e	f	2025-10-25 21:29:44.323019+00	2025-10-25 21:29:44.323019+00	\N	31d3ef55-1232-44b7-a4c9-68b837218c74
+00000000-0000-0000-0000-000000000000	37	cjzxsg2bk4mv	f6979247-726b-487c-8b13-ef5e1ae056d9	t	2025-10-25 20:16:34.141931+00	2025-10-25 21:31:22.20447+00	s7e6lnabjw7b	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	44	zyqc5tq2mdx7	f6979247-726b-487c-8b13-ef5e1ae056d9	f	2025-10-25 21:31:22.205896+00	2025-10-25 21:31:22.205896+00	cjzxsg2bk4mv	92bcc80a-6438-4e3e-a356-fa6bf8497706
+00000000-0000-0000-0000-000000000000	38	grezkamcwvax	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-25 20:24:20.76114+00	2025-10-25 21:35:04.282919+00	5mqvmzhsjse4	aba75ce1-94ea-446d-8e18-4a611a0e1338
+00000000-0000-0000-0000-000000000000	45	6q442tsxvk74	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-25 21:35:04.288177+00	2025-10-25 21:35:04.288177+00	grezkamcwvax	aba75ce1-94ea-446d-8e18-4a611a0e1338
 \.
 
 
@@ -4095,8 +4217,10 @@ COPY auth.schema_migrations (version) FROM stdin;
 --
 
 COPY auth.sessions (id, user_id, created_at, updated_at, factor_id, aal, not_after, refreshed_at, user_agent, ip, tag, oauth_client_id) FROM stdin;
-aba75ce1-94ea-446d-8e18-4a611a0e1338	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-25 10:47:29.007311+00	2025-10-25 16:40:34.321431+00	\N	aal1	\N	2025-10-25 16:40:34.321344	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
-92bcc80a-6438-4e3e-a356-fa6bf8497706	f6979247-726b-487c-8b13-ef5e1ae056d9	2025-10-25 11:08:42.045036+00	2025-10-25 16:39:49.537694+00	\N	aal1	\N	2025-10-25 16:39:49.536948	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
+3624e931-727c-432f-9e89-9cd69ad87d59	b207c1f2-dd20-4e5d-b01f-59d972cec30e	2025-10-25 21:29:32.87135+00	2025-10-25 21:29:32.87135+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	46.38.61.166	\N	\N
+31d3ef55-1232-44b7-a4c9-68b837218c74	b207c1f2-dd20-4e5d-b01f-59d972cec30e	2025-10-25 21:29:44.322271+00	2025-10-25 21:29:44.322271+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0	185.200.179.0	\N	\N
+92bcc80a-6438-4e3e-a356-fa6bf8497706	f6979247-726b-487c-8b13-ef5e1ae056d9	2025-10-25 11:08:42.045036+00	2025-10-25 21:31:22.208982+00	\N	aal1	\N	2025-10-25 21:31:22.208897	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
+aba75ce1-94ea-446d-8e18-4a611a0e1338	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-25 10:47:29.007311+00	2025-10-25 21:35:04.297262+00	\N	aal1	\N	2025-10-25 21:35:04.296568	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.200.179.0	\N	\N
 \.
 
 
@@ -4121,8 +4245,9 @@ COPY auth.sso_providers (id, resource_id, created_at, updated_at, disabled) FROM
 --
 
 COPY auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, invited_at, confirmation_token, confirmation_sent_at, recovery_token, recovery_sent_at, email_change_token_new, email_change, email_change_sent_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at, phone, phone_confirmed_at, phone_change, phone_change_token, phone_change_sent_at, email_change_token_current, email_change_confirm_status, banned_until, reauthentication_token, reauthentication_sent_at, is_sso_user, deleted_at, is_anonymous) FROM stdin;
-00000000-0000-0000-0000-000000000000	f6979247-726b-487c-8b13-ef5e1ae056d9	authenticated	authenticated	mosgate@gmail.com	$2a$10$L8plCueXWreLZLZOKOTbje28tS2D.mphEH3vP.SBbq/YxsbtZj7GC	2025-10-25 07:20:32.618457+00	\N		2025-10-25 07:20:18.092671+00		\N			\N	2025-10-25 11:08:42.044364+00	{"provider": "email", "providers": ["email"]}	{"sub": "f6979247-726b-487c-8b13-ef5e1ae056d9", "email": "mosgate@gmail.com", "email_verified": true, "phone_verified": false}	\N	2025-10-25 07:20:18.054934+00	2025-10-25 16:39:49.527038+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	authenticated	authenticated	eugsu10@gmail.com	$2a$10$ycLTAeppx6j9uZ6OSL3EOOil5iKV.HJJkMzBWoZqTvwNmW3B8Laoa	2025-10-23 13:36:30.71992+00	\N		\N		\N			\N	2025-10-25 10:47:29.006622+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-10-23 13:36:30.688124+00	2025-10-25 16:40:34.318762+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	b207c1f2-dd20-4e5d-b01f-59d972cec30e	authenticated	authenticated	postoev.e.v@su10.ru	$2a$10$UW51WpYTmqnTW3JMqDw14.nS/ERnm5BlSIG.c3ucqJ3NvoCIZzquO	2025-10-25 21:29:32.86731+00	\N		2025-10-25 21:29:19.873773+00		\N			\N	2025-10-25 21:29:44.322185+00	{"provider": "email", "providers": ["email"]}	{"sub": "b207c1f2-dd20-4e5d-b01f-59d972cec30e", "email": "postoev.e.v@su10.ru", "display_name": "Постоев", "email_verified": true, "phone_verified": false}	\N	2025-10-25 21:29:19.865027+00	2025-10-25 21:29:44.324759+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	f6979247-726b-487c-8b13-ef5e1ae056d9	authenticated	authenticated	mosgate@gmail.com	$2a$10$L8plCueXWreLZLZOKOTbje28tS2D.mphEH3vP.SBbq/YxsbtZj7GC	2025-10-25 07:20:32.618457+00	\N		2025-10-25 07:20:18.092671+00		\N			\N	2025-10-25 11:08:42.044364+00	{"provider": "email", "providers": ["email"]}	{"sub": "f6979247-726b-487c-8b13-ef5e1ae056d9", "email": "mosgate@gmail.com", "email_verified": true, "phone_verified": false}	\N	2025-10-25 07:20:18.054934+00	2025-10-25 21:31:22.207808+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	authenticated	authenticated	eugsu10@gmail.com	$2a$10$ycLTAeppx6j9uZ6OSL3EOOil5iKV.HJJkMzBWoZqTvwNmW3B8Laoa	2025-10-23 13:36:30.71992+00	\N		\N		\N			\N	2025-10-25 10:47:29.006622+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-10-23 13:36:30.688124+00	2025-10-25 21:35:04.290618+00	\N	\N			\N		0	\N		\N	f	\N	f
 \.
 
 
@@ -4148,6 +4273,8 @@ d0dc5f50-ebd4-437b-9132-e45405313f99	f6979247-726b-487c-8b13-ef5e1ae056d9	пло
 b2a37ab2-f36d-4efb-9dc3-9ab4b06a3bfb	f6979247-726b-487c-8b13-ef5e1ae056d9	площадь руанды	2025-10-25 11:09:03.902869+00
 5c79d89f-d09c-4576-9ef3-3e381515879b	f6979247-726b-487c-8b13-ef5e1ae056d9	площадь румынии	2025-10-25 13:29:24.302456+00
 25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	приведи список 5 самых больших стран азии и африки	2025-10-25 14:26:54.706074+00
+b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	расстояние от земли до луны	2025-10-25 17:48:43.873821+00
+2c2b2f0a-32e0-44ad-9c76-0f81ac1de54c	b207c1f2-dd20-4e5d-b01f-59d972cec30e	какая средняя генподрядная наценка в россии  и мир	2025-10-25 21:30:39.570011+00
 \.
 
 
@@ -4236,6 +4363,35 @@ bdcf8fdd-85da-448f-8e62-4b728e445da2	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f69792
 c2b44394-f896-4f09-a3f7-10bb57f062dd	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сделай график динамики населения в алжире за последниение 50 лет	grok-4-fast	\N	2025-10-25 16:40:07.581+00
 d6d7d46e-9351-47a7-b7a0-b9e8f46329a0	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сделай график динамики населения в алжире за последниение 50 лет	grok-4-fast	\N	2025-10-25 16:41:45.778+00
 0ba628c3-7325-49b3-a34e-0ac2e46dd764	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	приведи список 5 самых больших стран азии и африки	grok-4-fast	\N	2025-10-25 16:42:24.892+00
+2939713f-ebdd-4486-9ce8-8d5071505f58	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	расстояние от земли до луны	grok-4-fast	\N	2025-10-25 17:48:44.009641+00
+60040d81-24f4-4df3-8edd-8c063a65eebf	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Среднее расстояние от Земли до Луны составляет примерно **384 400 километров**. \n\nЭто значение усреднённое, так как орбита Луны эллиптическая: в ближайшей точке (перигей) оно около 363 300 км, а в дальней (апогей) — до 405 500 км. Эти данные основаны на измерениях NASA и других космических агентств. Если нужны более точные расчёты или дополнительные детали, уточните!	grok-4-fast	\N	2025-10-25 17:48:47.116925+00
+0a159840-e354-4edc-b30e-321678cc8f6c	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	user	сделай график динамики населения в алжире за последниение 50 лет	grok-4-fast	\N	2025-10-25 17:57:35.846624+00
+c3eed25e-0c6d-446e-80f9-b21e2c0fdaf1	25fbde9a-8cfe-45a0-a35e-18294dcc8031	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	### Динамика населения Алжира за последние 50 лет (1974–2024)\n\nЯ не могу создать интерактивный график в этом текстовом формате, но предоставлю:\n- **Таблицу с данными** (основана на оценках ООН и World Bank; население в миллионах человек, округлено).\n- **Простой ASCII-график** (линейный, для визуализации роста; шкала по годам и населению).\n- **Анализ**: Население Алжира росло экспоненциально благодаря высоким рождаемости и улучшению здравоохранения, но темпы роста замедляются.\n\n#### Таблица данных (население в млн человек)\n\n| Год  | Население (млн) | Прирост за 10 лет (%) |\n|------|-----------------|-----------------------|\n| 1974 | 15.0           | -                     |\n| 1980 | 18.1           | +20.7                 |\n| 1990 | 25.0           | +38.1                 |\n| 2000 | 30.8           | +23.2                 |\n| 2010 | 35.6           | +15.6                 |\n| 2020 | 43.9           | +23.3                 |\n| 2024 | 45.6           | +3.9 (за 4 года)      |\n\n*Источники: United Nations Population Division (World Population Prospects 2022) и World Bank. Данные — средние оценки; точные цифры могут варьироваться.*\n\n#### Анализ динамики\n- С 1974 по 1990: Быстрый рост (почти удвоение) из-за послевоенного baby-boom и снижения смертности.\n- 1990–2010: Стабильный рост, но замедление из-за урбанизации и снижения рождаемости.\n- 2010–2024: Рост продолжается, но темпы падают (с 2.5% в год в 1980-х до ~1.5% сейчас). Прогноз: К 2050 году — около 55–60 млн.\n\n#### ASCII-график динамики (линейный график)\nЗдесь население на оси Y (от 0 до 50 млн), годы на оси X. "*" представляет точки данных, соединенные линиями для тренда. (Масштаб приблизительный для простоты.)\n\n```\nНаселение (млн)\n50 |                                                                  \n   |                                                                  \n45 |                                                            *    \n   |                                                       *          \n40 |                                                 *                \n   |                                          *                      \n35 |                                   *                            \n   |                            *                                    \n30 |                     *                                           \n   |              *                                                  \n25 |        *                                                        \n   |   *                                                              \n15 |*                                                                 \n   |__________________________________________________________________\n     1974  1980  1990  2000  2010  2020  2024    Годы\n```\n\n- График показывает устойчивый восходящий тренд с ускорением в 1980–1990-х и замедлением недавно.\n- Для реального графика рекомендую использовать инструменты вроде Google Charts, Excel или сайты типа Our World in Data (поиск: "Algeria population").\n\nЕсли нужно больше деталей, данные по годам или график для другой страны — дай знать!\n\n### Список 5 самых больших стран Азии и Африки\n(Кратко повторяю из предыдущего ответа, как просил. По площади, в км².)\n\n#### Азия:\n1. Россия — 17 098 242\n2. Китай — 9 596 961\n3. Индия — 3 287 263\n4. Казахстан — 2 724 900\n5. Саудовская Аравия — 2 149 690\n\n#### Африка:\n1. Алжир — 2 381 741\n2. ДР Конго — 2 344 858\n3. Судан — 1 861 484\n4. Ливия — 1 759 540\n5. Чад — 1 284 000	grok-4-fast	\N	2025-10-25 17:57:49.874433+00
+2b9d6e3a-afa7-4fea-b30f-2a8052f86980	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	а какое расстояние от земли до солнца?	grok-4-fast	\N	2025-10-25 20:17:59.786083+00
+04a95d15-dfe7-4f03-b5d6-dfb5dce55cfc	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Среднее расстояние от Земли до Солнца составляет примерно **149 597 870 километров**. \n\nЭто значение известно как **1 астрономическая единица (АЕ)** и является усреднённым, поскольку орбита Земли вокруг Солнца эллиптическая: в ближайшей точке (перигелий) — около 147 миллионов км, а в дальней (афелий) — до 152 миллионов км. Данные основаны на измерениях NASA и других астрономических организаций. Если нужны дополнительные детали или сравнения, спрашивайте!	grok-4-fast	\N	2025-10-25 20:18:01.917032+00
+dffb1561-1826-42b9-88f3-eb41b2b4b0a7	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	а сколько АЕ до альфа центравра	grok-4-fast	\N	2025-10-25 20:22:43.048101+00
+5aa54246-6122-4dfb-9a29-110c0afbfefa	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Расстояние от Земли (Солнечной системы) до звёздной системы Альфа Центавра (ближайшей к нам) составляет примерно **276 000 астрономических единиц (АЕ)**.\n\nЭто значение основано на расстоянии около **4,37 световых лет** (стандартное для Альфа Центавра A и B; Проксима Центавра чуть ближе — 4,24 св. года, или ~253 000 АЕ). \n\nДля справки: 1 световой год равен примерно 63 240 АЕ, так что перевод довольно прямолинейный. Данные отчёта от Международной астрономической ассоциации (IAU) и NASA. Если нужны детали о звёздах системы или сравнения, уточните!	grok-4-fast	\N	2025-10-25 20:22:47.433064+00
+5fe6954d-f424-4c13-9188-8ccac50da7fa	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какие 2 самые близкие планеты	grok-4-fast	\N	2025-10-25 20:23:43.40383+00
+965037a0-2ae2-43ff-8add-84848513d568	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какие 2 самые близкие планеты	grok-4-fast	\N	2025-10-25 20:25:05.528225+00
+b407880b-3343-4fdc-8445-f01998e10518	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Две ближайшие к Земле планеты в Солнечной системе — это **Венера** и **Марс**.\n\n- **Венера**: Среднее расстояние от Земли — около 41 миллиона километров (минимальное — 38 млн км во время оппозиции). Она ближе всего из-за орбиты внутри земной.\n- **Марс**: Среднее расстояние — около 78 миллионов километров (минимальное — 54 млн км). Это вторая по близости.\n\nЭти значения усреднены и зависят от позиций планет на орбитах. Данные от NASA и IAU. Если вы имели в виду ближайшие к Солнцу (Меркурий и Венера) или что-то другое, уточните!	grok-4-fast	\N	2025-10-25 20:25:09.390673+00
+35ce7f23-b6e4-4920-9c06-6babf1e63a67	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какие 2 самые близкие планеты между собой	deepseek-chat	\N	2025-10-25 20:25:41.133174+00
+3cfa84e2-8406-4262-94bc-27cf24802cd7	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какие 2 самые близкие планеты между собой	grok-4-fast	\N	2025-10-25 20:28:40.861079+00
+0b5e3b13-387b-4669-9d0a-1bac29084b46	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какие 2 самые близкие планеты между собой	gemini-2.5-flash	\N	2025-10-25 20:38:10.306307+00
+87fbb45d-23df-4e0f-8777-7c104fd28779	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какие 2 самые близкие планеты между собой	grok-4-fast	\N	2025-10-25 20:46:52.358665+00
+e661e87c-b71b-4790-8953-1df53d5ae77e	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Две планеты Солнечной системы, которые находятся ближе всего друг к другу (по минимальному расстоянию), — это **Венера** и **Земля**.\n\n- **Минимальное расстояние между ними**: около **38,2 миллиона километров** (происходит во время нижнего соединения, когда Венера проходит между Землёй и Солнцем).\n- **Среднее расстояние**: примерно 41 миллион километров.\n\nЭто меньше, чем между любой другой парой планет. Для сравнения:\n- Минимальное расстояние между Землёй и Марсом — около 54,6 млн км.\n- Между Меркурием и Венерой — около 75 млн км.\n\nОрбиты планет эллиптические, поэтому расстояния варьируются, но Венера и Земля всегда остаются ближайшей парой. Данные основаны на измерениях NASA и Международной астрономической ассоциации (IAU). Если вы имеете в виду экзопланеты за пределами Солнечной системы или другой контекст, уточните!	grok-4-fast	\N	2025-10-25 20:46:56.473782+00
+bcf1985d-f644-4469-a076-87be402fa678	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	а самые дальние?	grok-4-fast	\N	2025-10-25 20:47:41.271233+00
+a21c20f4-8bea-42d6-86c0-f48cbedaa285	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	assistant	Две планеты Солнечной системы, которые находятся дальше всего друг от друга (по максимальному расстоянию), — это **Меркурий** и **Нептун**.\n\n- **Максимальное расстояние между ними**: около **4,5–4,6 миллиарда километров** (или примерно 30,4 астрономических единицы, АЕ). Это происходит, когда планеты находятся на противоположных сторонах от Солнца на своих орбитах.\n- **Среднее расстояние**: примерно 4,3 миллиарда километров (учитывая их орбитальные позиции).\n\nМеркурий — ближайшая к Солнцу планета (среднее расстояние ~58 млн км), а Нептун — самая далёкая (среднее ~4,5 млрд км), поэтому их пара даёт наибольшее возможное расстояние среди всех комбинаций планет. Орбиты эллиптические, так что расстояние варьируется, но эта пара всегда самая удалённая. Данные от NASA и Международной астрономической ассоциации (IAU). Если вы имеете в виду минимальное расстояние между дальними планетами (например, Уран и Нептун) или другой аспект, уточните!	grok-4-fast	\N	2025-10-25 20:47:46.025141+00
+3b11552b-d9de-480d-8057-6f625b0cf461	b90d21b0-68f1-4d86-a47e-c5fddbf00937	f6979247-726b-487c-8b13-ef5e1ae056d9	user	какие самые дальние из соседних?	grok-4-fast	\N	2025-10-25 20:48:41.583722+00
+3d15dba8-d301-4e08-b6e2-22f3cab9b5eb	2c2b2f0a-32e0-44ad-9c76-0f81ac1de54c	b207c1f2-dd20-4e5d-b01f-59d972cec30e	user	какая средняя генподрядная наценка в россии  и мире	grok-4-fast	\N	2025-10-25 21:30:39.632418+00
+5ef4c31e-8c8b-46e5-87ac-4fedd9c80227	2c2b2f0a-32e0-44ad-9c76-0f81ac1de54c	b207c1f2-dd20-4e5d-b01f-59d972cec30e	assistant	### Средняя генподрядная наценка: Россия и мир\n\nГенподрядная наценка (или маржа генподрядчика) — это разница между стоимостью работ, материалов и услуг, которую генподрядчик закупает у субподрядчиков, и итоговой ценой контракта для заказчика. Она покрывает управление проектом, риски, прибыль и overhead (административные расходы). Наценка сильно зависит от отрасли (строительство, IT, производство), типа проекта (жилой, коммерческий, инфраструктурный), региона, экономической ситуации и конкуренции. Данные ниже — это обобщенные средние значения на основе отраслевых отчетов (например, от Deloitte, McKinsey, Росстата и международных ассоциаций строителей) на 2023–2024 годы. Они приблизительны и могут варьироваться; рекомендую проверять актуальные данные в специализированных источниках, таких как Минстрой РФ или FIDIC для мира.\n\n#### В России\n- **Средняя наценка**: 8–15% от общей стоимости проекта.\n  - В строительстве (самая распространенная область для генподрядчиков): 10–12% для жилых и коммерческих объектов. Для крупных инфраструктурных проектов (дороги, мосты) — до 15–20%, но с учетом госрегулирования (ФЗ-44, ФЗ-223) и инфляции (на 2024 год ~7–8%) она часто ниже.\n  - В IT и консалтинге: 15–25%, так как риски выше.\n  - Факторы влияния: Высокая конкуренция, санкции и волатильность цен на материалы снижают маржу. По данным Росстата и аналитики (например, от "Эксперт РА"), в 2023 году средняя рентабельность генподрядчиков в строительстве составила около 9–11%.\n- **Пример**: Для типового жилого дома наценка может быть 10% (из 100 млн руб. контракта — 10 млн руб. на управление и прибыль).\n\n#### В мире\n- **Средняя наценка**: 10–20% от общей стоимости.\n  - В США и Европе (строительство): 12–18% для коммерческих проектов, 8–12% для жилых. По отчетам Dodge Data & Analytics (2023), средняя маржа генподрядчиков в США — 11–14%, с ростом из-за инфляции и цепочек поставок.\n  - В Азии (Китай, Индия): 5–10%, из-за низкой конкуренции и масштаба, но с рисками коррупции.\n  - В развивающихся странах (Латинская Америка, Африка): 15–25%, чтобы покрыть высокие риски (политические, валютные).\n  - Глобальный средний показатель (по данным World Bank и ENR — Engineering News-Record): Около 12–15% для крупных проектов. В нефтегазе или энергетике — до 20–30%.\n- **Пример**: В ЕС для коммерческого здания наценка ~15% (из €100 млн — €15 млн на генподряд).\n\n**Важные замечания**:\n- Наценка рассчитывается как процент от себестоимости или от общей суммы контракта. В контрактах часто фиксируется как "общая прибыльность" (gross margin).\n- Влияющие факторы: Экономический цикл (в кризис наценка падает), тип контракта (FIDIC — фиксированная цена, EPC — с рисками) и цифровизация (BIM снижает overhead).\n- Для точности: В России смотрите отчеты Минстроя или СРО (саморегулируемых организаций). В мире — сайты AGC (Associated General Contractors) или аналогичные.\n\nЕсли у вас есть детали по отрасли или региону, я могу уточнить!	grok-4-fast	\N	2025-10-25 21:30:48.715456+00
+\.
+
+
+--
+-- Data for Name: test_table; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.test_table (id, content) FROM stdin;
 \.
 
 
@@ -4290,6 +4446,14 @@ ac010f3d-be6f-46e7-bf53-59003ba7ecd1	f6979247-726b-487c-8b13-ef5e1ae056d9	deepse
 3d2c137c-86f1-4103-91f3-8d721fa33c0c	f6979247-726b-487c-8b13-ef5e1ae056d9	gpt-5-mini	0	0	0	error	2025-10-25 13:29:53.470116+00	OpenAI API error: 429	5a3a9a5e-88f1-4fc5-8a46-b34677e87262
 f37119df-7db2-4390-bfca-824959384ed6	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	0	0	0	error	2025-10-25 14:26:55.508293+00	Дневной лимит запросов исчерпан.	8a5f3345-c1c2-49eb-9e07-71751b638ad0
 3446e440-1978-4c32-a00c-bb7a03eeb6a4	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	184	260	1036	success	2025-10-25 14:29:50.672606+00	\N	e612db7e-97fa-4727-9ba5-996e818ba04c
+94c235bd-541c-4a4e-b8e7-a3feec9924c1	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	163	105	449	success	2025-10-25 17:48:47.368964+00	\N	2939713f-ebdd-4486-9ce8-8d5071505f58
+ebfe9a85-1c14-464b-b0e2-5a197d19d5ab	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	545	891	1799	success	2025-10-25 17:57:50.202734+00	\N	0a159840-e354-4edc-b30e-321678cc8f6c
+a188f23f-b7e9-4ddc-8e7a-66ecc1545e35	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	286	122	582	success	2025-10-25 20:18:02.065207+00	\N	2b9d6e3a-afa7-4fea-b30f-2a8052f86980
+2ad32af3-4c1e-4e11-b938-bbeac65aba64	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	426	170	1040	success	2025-10-25 20:22:47.508193+00	\N	dffb1561-1826-42b9-88f3-eb41b2b4b0a7
+2115e3af-562a-4ab1-a047-86fe96eb6e76	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	622	159	1070	success	2025-10-25 20:25:09.550564+00	\N	965037a0-2ae2-43ff-8add-84848513d568
+1db8d456-3326-4a20-8384-5cd1762f3a17	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	835	229	1654	success	2025-10-25 20:46:56.585237+00	\N	87fbb45d-23df-4e0f-8777-7c104fd28779
+3523fdb7-416d-4525-b4ad-531b0c1208cb	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4-fast	1077	264	1840	success	2025-10-25 20:47:46.176204+00	\N	bcf1985d-f644-4469-a076-87be402fa678
+cb2fad2e-8595-48e9-875c-1024c1749621	b207c1f2-dd20-4e5d-b01f-59d972cec30e	grok-4-fast	173	849	1394	success	2025-10-25 21:30:48.851949+00	\N	3d15dba8-d301-4e08-b6e2-22f3cab9b5eb
 \.
 
 
@@ -4297,9 +4461,10 @@ f37119df-7db2-4390-bfca-824959384ed6	f6979247-726b-487c-8b13-ef5e1ae056d9	grok-4
 -- Data for Name: user_profiles; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.user_profiles (id, email, daily_request_limit, created_at, updated_at, role) FROM stdin;
-8537c87c-44d7-450e-b1b0-498ae7ddd3f6	eugsu10@gmail.com	100	2025-10-24 13:09:54.861618+00	2025-10-25 09:43:28.712129+00	admin
-f6979247-726b-487c-8b13-ef5e1ae056d9	mosgate@gmail.com	35	2025-10-25 07:20:34.044915+00	2025-10-25 16:40:45.614831+00	user
+COPY public.user_profiles (id, email, daily_request_limit, created_at, updated_at, role, display_name) FROM stdin;
+8537c87c-44d7-450e-b1b0-498ae7ddd3f6	eugsu10@gmail.com	100	2025-10-24 13:09:54.861618+00	2025-10-25 09:43:28.712129+00	admin	\N
+f6979247-726b-487c-8b13-ef5e1ae056d9	mosgate@gmail.com	25	2025-10-25 07:20:34.044915+00	2025-10-25 20:37:53.938174+00	user	\N
+b207c1f2-dd20-4e5d-b01f-59d972cec30e	postoev.e.v@su10.ru	20	2025-10-25 21:29:19.864705+00	2025-10-25 21:29:19.864705+00	user	Постоев
 \.
 
 
@@ -4514,7 +4679,7 @@ COPY vault.secrets (id, name, description, secret, key_id, nonce, created_at, up
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: supabase_auth_admin
 --
 
-SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 35, true);
+SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 45, true);
 
 
 --
@@ -4769,6 +4934,14 @@ ALTER TABLE ONLY public.conversations
 
 ALTER TABLE ONLY public.messages
     ADD CONSTRAINT messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: test_table test_table_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.test_table
+    ADD CONSTRAINT test_table_pkey PRIMARY KEY (id);
 
 
 --
@@ -5337,6 +5510,13 @@ CREATE INDEX supabase_functions_hooks_h_table_id_h_name_idx ON supabase_function
 --
 
 CREATE INDEX supabase_functions_hooks_request_id_idx ON supabase_functions.hooks USING btree (request_id);
+
+
+--
+-- Name: users on_auth_user_created; Type: TRIGGER; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 
 --
@@ -6392,6 +6572,20 @@ GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO postgres;
 
 
 --
+-- Name: FUNCTION get_user_model_usage_stats(p_user_id uuid, period text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.get_user_model_usage_stats(p_user_id uuid, period text) TO service_role;
+
+
+--
+-- Name: FUNCTION get_user_usage_stats(p_user_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.get_user_usage_stats(p_user_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION apply_rls(wal jsonb, max_record_bytes integer); Type: ACL; Schema: realtime; Owner: supabase_admin
 --
 
@@ -6754,16 +6948,16 @@ GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
 -- Name: TABLE conversations; Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT SELECT,INSERT ON TABLE public.conversations TO anon;
 GRANT SELECT,INSERT ON TABLE public.conversations TO authenticated;
+GRANT SELECT,INSERT ON TABLE public.conversations TO service_role;
 
 
 --
 -- Name: TABLE messages; Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT SELECT,INSERT ON TABLE public.messages TO anon;
 GRANT SELECT,INSERT ON TABLE public.messages TO authenticated;
+GRANT SELECT,INSERT ON TABLE public.messages TO service_role;
 
 
 --
@@ -6771,7 +6965,7 @@ GRANT SELECT,INSERT ON TABLE public.messages TO authenticated;
 --
 
 GRANT SELECT,INSERT ON TABLE public.usage_logs TO authenticated;
-GRANT SELECT,INSERT ON TABLE public.usage_logs TO anon;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.usage_logs TO service_role;
 
 
 --
@@ -6779,7 +6973,7 @@ GRANT SELECT,INSERT ON TABLE public.usage_logs TO anon;
 --
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.user_profiles TO authenticated;
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.user_profiles TO anon;
+GRANT SELECT ON TABLE public.user_profiles TO service_role;
 
 
 --
@@ -7188,5 +7382,5 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict kYTtQbhpxxNsFF7V6dAe0SezXYAgqGvbyUovYSclyEieNVtzoznBfHIkIBnPP7s
+\unrestrict nlLGEwCqbrCXZuUY2WQdOS12lDh2XaSAvLP2NhoAbKmwf8TUP0TkwIRBkggxoJK
 

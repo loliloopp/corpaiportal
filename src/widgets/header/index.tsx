@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
-import { Layout, Avatar, Dropdown, Space, Typography, Spin } from 'antd';
-import { UserOutlined, LogoutOutlined, SettingOutlined, BulbOutlined, DashboardOutlined } from '@ant-design/icons';
+import { Layout, Avatar, Dropdown, Space, Typography, Spin, Button } from 'antd';
+import { UserOutlined, LogoutOutlined, SettingOutlined, SunOutlined, MoonOutlined, DashboardOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/features/auth';
 import { useThemeContext } from '@/app/providers/theme-provider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -64,15 +64,35 @@ const UsageStats = () => {
     );
 };
 
-export const Header = () => {
-  const { user, signOut, profile } = useAuthStore();
+const ThemeToggleMenu = () => {
   const { theme, setTheme } = useThemeContext();
   const isDark = theme === 'dark';
-  const navigate = useNavigate();
 
-  const handleThemeChange = () => {
-    setTheme(isDark ? 'light' : 'dark');
-  };
+  return (
+    <div style={{ padding: '8px 12px', display: 'flex', gap: '8px' }}>
+      <Button
+        type={!isDark ? 'primary' : 'default'}
+        size="small"
+        icon={<SunOutlined />}
+        onClick={() => setTheme('light')}
+        style={{ borderRadius: '4px' }}
+      />
+      <Button
+        type={isDark ? 'primary' : 'default'}
+        size="small"
+        icon={<MoonOutlined />}
+        onClick={() => setTheme('dark')}
+        style={{ borderRadius: '4px' }}
+      />
+    </div>
+  );
+};
+
+export const Header = () => {
+  const { user, signOut, profile } = useAuthStore();
+  const { theme } = useThemeContext();
+  const isDark = theme === 'dark';
+  const navigate = useNavigate();
 
   const menuItems = [
     ...(profile?.role === 'admin'
@@ -93,9 +113,7 @@ export const Header = () => {
       : []),
     {
       key: 'theme',
-      icon: <BulbOutlined />,
-      label: `Тема: ${isDark ? 'Темная' : 'Светлая'}`,
-      onClick: handleThemeChange,
+      label: <ThemeToggleMenu />,
     },
     {
       key: 'logout',
@@ -109,7 +127,7 @@ export const Header = () => {
     <AntHeader style={{ 
       padding: '0 24px', 
       display: 'flex', 
-      justifyContent: 'space-between', // Changed
+      justifyContent: 'space-between',
       alignItems: 'center',
       background: isDark ? '#363535' : '#ffffff',
       borderBottom: 'none',

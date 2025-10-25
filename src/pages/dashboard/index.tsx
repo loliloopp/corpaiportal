@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Tabs, Select, Typography, Row, Col, Statistic, Card, Spin, Table } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { getGeneralStats, getModelUsageStats, getUserStats, getAllUsersForStats, getUserMessageHistory } from '@/entities/statistics/api/statistics-api';
+import { getGeneralStats, getModelUsageStats, getUserStats, getAllUsersForStats, getUserMessageHistory, getUserModelUsageStats } from '@/entities/statistics/api/statistics-api';
 import { useThemeContext } from '@/app/providers/theme-provider';
 
 const { Title } = Typography;
@@ -97,11 +97,32 @@ const UserStatsTab = () => {
         queryFn: () => selectedUser ? getUserStats(selectedUser, period) : [],
         enabled: !!selectedUser,
     });
+    const { data: modelStats, isLoading: isLoadingModelStats } = useQuery({
+        queryKey: ['userModelStats', selectedUser, period],
+        queryFn: () => selectedUser ? getUserModelUsageStats(selectedUser, period) : [],
+        enabled: !!selectedUser,
+    });
     const { data: historyData, isLoading: isLoadingHistory } = useQuery({
         queryKey: ['userMessageHistory', selectedUser, period, pagination.current, pagination.pageSize],
         queryFn: () => selectedUser ? getUserMessageHistory(selectedUser, period, pagination.pageSize, pagination.current) : { data: [], total: 0 },
         enabled: !!selectedUser,
     });
+
+    const tableData = modelStats?.map((m: any) => ({
+        key: m.model,
+        model: m.model,
+        requests: m.total_requests,
+        tokens: m.total_tokens,
+    })) || [];
+
+    const totalRequests = tableData.reduce((acc, cur) => acc + Number(cur.requests), 0);
+    const totalTokens = tableData.reduce((acc, cur) => acc + Number(cur.tokens), 0);
+    
+    const columns = [
+        { title: 'Модель', dataIndex: 'model', key: 'model' },
+        { title: 'Запросы', dataIndex: 'requests', key: 'requests' },
+        { title: 'Токены', dataIndex: 'tokens', key: 'tokens' },
+    ];
     
     const historyColumns = [
         { title: 'Дата', dataIndex: 'created_at', key: 'created_at' },
@@ -126,15 +147,31 @@ const UserStatsTab = () => {
                 loading={isLoadingUsers}
                 style={{ width: 300, marginBottom: 20 }}
                 filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-                options={users?.map(u => ({ value: u.id, label: u.email }))}
+                options={users?.map(u => ({ value: u.id, label: `${u.display_name || 'N/A'} - ${u.email}` }))}
             />
             {selectedUser && (
-                 <Spin spinning={isLoadingStats || isLoadingHistory}>
+                 <Spin spinning={isLoadingStats || isLoadingModelStats || isLoadingHistory}>
                     <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20, marginLeft: 10 }}>
                         <Select.Option value="day">За день</Select.Option>
                         <Select.Option value="week">За неделю</Select.Option>
                         <Select.Option value="month">За месяц</Select.Option>
                     </Select>
+                    <Table 
+                        dataSource={tableData}
+                        columns={columns}
+                        pagination={false}
+                        bordered
+                        size="small"
+                        style={{ marginBottom: 20 }}
+                        summary={() => (
+                            <Table.Summary.Row>
+                                <Table.Summary.Cell index={0}><strong>Всего</strong></Table.Summary.Cell>
+                                <Table.Summary.Cell index={1}><strong>{totalRequests}</strong></Table.Summary.Cell>
+                                <Table.Summary.Cell index={2}><strong>{totalTokens}</strong></Table.Summary.Cell>
+                            </Table.Summary.Row>
+                        )}
+                    />
+                    <Title level={4}>Динамика использования</Title>
                      <ResponsiveContainer width="100%" height={300}>
                          <LineChart data={stats}>
                              <XAxis dataKey="date_trunc" />
