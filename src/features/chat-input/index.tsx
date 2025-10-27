@@ -50,7 +50,7 @@ export const ChatInputForm: React.FC<ChatInputFormProps> = ({ onSendMessage, loa
           }}
         />
       </Form.Item>
-      <Form.Item style={{ marginBottom: 0 }}>
+      <Form.Item style={{ marginBottom: 0, minWidth: 220 }}>
         <ModelSelector value={selectedModel} onChange={setSelectedModel} availableModels={availableModels} />
       </Form.Item>
     </Form>
