@@ -62,6 +62,12 @@ const AdminPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [editingKey, setEditingKey] = useState('');
 
+  // Function to break text into words only (letters + digits with dots), skip pure digit separators
+  const breakTextByWords = (text: string): string => {
+    const words = text.match(/[a-zа-яё]+(?:\s*[\d.]+)?/gi) || [];
+    return words.map(w => w.trim()).join('\n');
+  };
+
   const { data: users, isLoading: isLoadingUsers } = useQuery({ queryKey: ['users'], queryFn: getAllUsers });
 
   // Fetch all models available in the system once, we'll use this to generate columns
@@ -158,13 +164,24 @@ const AdminPage: React.FC = () => {
   };
 
   const baseColumns = [
-    { title: 'Пользователи', dataIndex: 'email', key: 'email', fixed: 'left' as const, width: 250 },
+    { 
+      title: 'Пользователи', 
+      dataIndex: 'email', 
+      key: 'email', 
+      width: '25%',
+      render: (_: any, record: UserProfile) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>{record.display_name || 'N/A'}</div>
+          <div style={{ fontSize: '0.85em', color: '#999' }}>{record.email}</div>
+        </div>
+      ),
+    },
     {
       title: '',
       dataIndex: 'action',
       key: 'action',
-      fixed: 'left' as const,
       width: 40,
+      align: 'center' as const,
       render: (_: any, record: UserProfile) => {
         const editable = isEditing(record);
         return editable ? (
@@ -202,7 +219,8 @@ const AdminPage: React.FC = () => {
       key: 'role',
       editable: true,
       inputType: 'select',
-      width: 150,
+      flex: 0.6,
+      align: 'center' as const,
     },
     {
       title: 'Дневной\nлимит',
@@ -210,17 +228,19 @@ const AdminPage: React.FC = () => {
       key: 'daily_request_limit',
       editable: true,
       inputType: 'number',
-      width: 150,
+      flex: 0.7,
+      align: 'center' as const,
     },
   ];
 
   const modelColumns = useMemo(() => {
     if (!allModels) return [];
     return allModels.map((model) => ({
-      title: model.display_name.split(' ').join('\n'),
+      title: breakTextByWords(model.display_name),
       dataIndex: model.id,
       key: model.id,
-      width: 150,
+      flex: 1,
+      align: 'center' as const,
       render: (_: any, record: UserProfile) => {
         const userModels = userModelMap[record.id] || {};
         const modelAccess = userModels[model.id];
@@ -279,7 +299,7 @@ const AdminPage: React.FC = () => {
           rowKey="id"
           loading={isLoadingUsers || isLoadingModels || isLoadingAllUserModels}
           bordered={false}
-          scroll={{ x: 1500 }}
+          scroll={{ x: 'auto' }}
           rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
           style={{
             borderCollapse: 'collapse',
@@ -296,17 +316,30 @@ const AdminPage: React.FC = () => {
         .ant-table .ant-table-cell {
           border-right: none;
           border-bottom: 1px solid #e5e5e5;
+          padding: 4px 8px !important;
         }
         .ant-table thead .ant-table-cell {
           border-bottom: 1px solid #e5e5e5;
-          white-space: pre-wrap;
+          text-align: center;
+          white-space: normal;
           word-break: break-word;
+          padding: 6px 4px !important;
+          font-size: 0.85em;
         }
         .ant-table-row-light .ant-table-cell-fix-left {
           background-color: #ffffff;
         }
         .ant-table-row-gray .ant-table-cell-fix-left {
           background-color: #f5f5f5;
+        }
+        table {
+          table-layout: fixed !important;
+        }
+        .ant-table table {
+          width: 100% !important;
+        }
+        .ant-table-tbody > tr > td {
+          font-size: 0.9em;
         }
       `}</style>
     </div>
