@@ -64,10 +64,25 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             return res.status(401).json({ error: 'Invalid JWT. Authentication failed.' });
         }
         
+        // 2. Check model access rights
+        const { data: hasAccess, error: accessError } = await supabase.rpc('check_model_access', {
+            p_user_id: user.id,
+            p_model_id: model,
+        });
+
+        if (accessError) {
+            console.error('Error checking model access:', accessError);
+            return res.status(500).json({ error: 'Error checking model access.' });
+        }
+
+        if (!hasAccess) {
+            return res.status(403).json({ error: 'У вас нет доступа к этой модели.' });
+        }
+
         let conversationId = initialConversationId;
         const userMessageContent = messages[messages.length - 1].content;
 
-        // 2. Create conversation if it's a new one
+        // 3. Create conversation if it's a new one
         if (!conversationId) {
             const { data: newConversation, error: convError } = await supabase
                 .from('conversations')
@@ -78,7 +93,7 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             conversationId = newConversation.id;
         }
 
-        // 3. Save user message
+        // 4. Save user message
         const { data: savedUserMessage, error: userMessageError } = await supabase
             .from('messages')
             .insert({
@@ -93,7 +108,7 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
         if (userMessageError) throw userMessageError;
 
 
-        // 4. Check limits (now that we have a user)
+        // 5. Check limits (now that we have a user)
         const { data: usageData, error: usageError } = await supabase.rpc('get_user_usage_stats', { p_user_id: user.id });
         if (usageError) throw new Error(usageError.message);
         if (usageData.usage >= usageData.limit) {
@@ -128,13 +143,13 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             };
         }
 
-        // 5. Forward to AI provider
+        // 6. Forward to AI provider
         const aiResponse = await axios.post(providerConfig.url, requestBody, { headers });
         const aiMessageContent = providerConfig.provider === 'gemini'
             ? aiResponse.data.candidates[0].content.parts[0].text
             : aiResponse.data.choices[0].message.content;
 
-        // 6. Save AI message
+        // 7. Save AI message
         await supabase.from('messages').insert({
             conversation_id: conversationId,
             user_id: user.id,
@@ -143,7 +158,7 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             model: model,
         });
 
-        // 7. Log usage
+        // 8. Log usage
         const usage = providerConfig.provider === 'gemini' 
             ? aiResponse.data.usageMetadata 
             : aiResponse.data.usage;
@@ -167,6 +182,7 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             console.error('Failed to log usage:', logError);
         }
 
+        // 9. Return response
         res.status(200).json({
             ...aiResponse.data,
             // Return conversationId so frontend knows it if it was created

@@ -7,7 +7,8 @@ import { getConversations, getMessages, createConversation, saveMessage } from '
 import { useAuthStore } from '@/features/auth';
 import { sendAIRequest } from '@/shared/api/proxy-api';
 import { logUsage } from '@/entities/limits';
-import { MODELS } from '@/shared/config/models.config';
+import { Model, MODELS } from '@/shared/config/models.config';
+import { getModelsWithAccess, ModelWithAccess } from '@/entities/models/api/models-api';
 
 type Conversation = {
     id: string;
@@ -20,10 +21,12 @@ interface ChatState {
   messages: Message[];
   activeConversation: string | null;
   selectedModel: string;
+  availableModels: Model[]; // Store available models
   loading: boolean;
   onSendMessageStart: (() => void) | null; // Callback
   fetchConversations: (userId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
+  fetchAvailableModels: (userId: string) => Promise<void>; // New function
   setActiveConversation: (conversationId: string | null) => void;
   setSelectedModel: (model: string) => void;
   sendMessage: (content: string) => void;
@@ -34,6 +37,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   activeConversation: null,
   selectedModel: 'grok-4-fast',
+  availableModels: [], // Initial state
   loading: false,
   onSendMessageStart: null, // Initial value
   fetchConversations: async (userId: string) => {
@@ -52,6 +56,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ messages: data || [], loading: false });
     } catch (error) {
       set({ loading: false });
+    }
+  },
+  fetchAvailableModels: async (userId: string) => {
+    try {
+      const modelsWithAccess = await getModelsWithAccess(userId);
+      const userModels = modelsWithAccess
+        .filter(m => m.has_access)
+        .map(m => ({
+            id: m.model_id,
+            name: m.display_name,
+            provider: m.provider,
+        } as Model));
+        
+      set({ availableModels: userModels });
+
+      // If the currently selected model is not in the available list, switch to the first available one
+      const currentModelStillAvailable = userModels.some(m => m.id === get().selectedModel);
+      if (!currentModelStillAvailable && userModels.length > 0) {
+          set({ selectedModel: userModels[0].id });
+      }
+
+    } catch (error) {
+      console.error('Error fetching available models:', error);
+      set({ availableModels: [] }); // Set to empty on error
     }
   },
   setActiveConversation: (conversationId: string | null) => {
