@@ -8,7 +8,7 @@ import { useAuthStore } from '@/features/auth';
 import { sendAIRequest } from '@/shared/api/proxy-api';
 import { logUsage } from '@/entities/limits';
 import { Model, MODELS } from '@/shared/config/models.config';
-import { getModelsWithAccess, ModelWithAccess, getConfiguredModels, getDatabaseModels } from '@/entities/models/api/models-api';
+import { getModelsWithAccess, ModelWithAccess, getConfiguredModels, getDatabaseModels, getUserAccessibleModels } from '@/entities/models/api/models-api';
 import { openRouterApi, OpenRouterModel } from '@/entities/models/api/openrouter-api';
 
 type Conversation = {
@@ -67,17 +67,14 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
     fetchAvailableModels: async (userId: string) => {
       try {
-        // Get models from the database (these are the only valid models)
-        const dbModels = await getDatabaseModels();
-        
-        // Convert to Model format
-        const userModels: Model[] = dbModels.map(m => ({
+        // Get models that the user has access to
+        const userModels = await getUserAccessibleModels(userId);
+          
+        set({ availableModels: userModels.map(m => ({
           id: m.id,
           name: m.name,
           provider: m.provider as any,
-        }));
-          
-        set({ availableModels: userModels });
+        })) });
 
         // If the currently selected model is not in the available list, switch to the first available one
         const currentModelStillAvailable = userModels.some(m => m.id === get().selectedModel);

@@ -46,3 +46,43 @@ export const getDatabaseModels = async (): Promise<Array<{ id: string; name: str
     const response = await proxyApi.get<Array<{ id: string; name: string; provider: string }>>('/api/v1/models');
     return response;
 };
+
+export const getUserAccessibleModels = async (userId: string): Promise<Array<{ id: string; name: string; provider: string }>> => {
+    // Get all models first (from cache or fresh)
+    const allModels = await getDatabaseModels();
+
+    // Get user's accessible model UUIDs from user_model_access table
+    const { data: accessData, error: accessError } = await supabase
+        .from('user_model_access')
+        .select('model_id')
+        .eq('user_id', userId);
+
+    if (accessError) {
+        console.error('Error fetching user model access:', accessError);
+        throw accessError;
+    }
+
+    if (!accessData || accessData.length === 0) {
+        return [];
+    }
+
+    // Get the list of model UUIDs the user has access to
+    const userAccessModelIds = accessData.map((row: any) => row.model_id);
+
+    // Now get the actual models from models table that match these UUIDs
+    const { data: modelData, error: modelError } = await supabase
+        .from('models')
+        .select('model_id, display_name, provider')
+        .in('id', userAccessModelIds);
+
+    if (modelError) {
+        console.error('Error fetching accessible models:', modelError);
+        throw modelError;
+    }
+
+    return modelData?.map(row => ({
+        id: row.model_id,
+        name: row.display_name,
+        provider: row.provider,
+    })) || [];
+};
