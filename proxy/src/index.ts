@@ -173,13 +173,15 @@ async function main() {
 
             // 3. Save user message
             const userMessage = messages[messages.length - 1];
-            const { error: saveMessageError } = await supabase.from('messages').insert({
+            const { data: savedUserMessage, error: saveMessageError } = await supabase.from('messages').insert({
                 conversation_id: conversationId,
                 user_id: user.id,
                 role: 'user',
                 content: userMessage.content,
-            });
+            }).select().single();
+            
             if (saveMessageError) throw saveMessageError;
+            const userMessageId = savedUserMessage?.id;
             console.log(`Saved user message to conversation ${conversationId}`);
 
 
@@ -189,11 +191,6 @@ async function main() {
             // 4. Determine routing and prepare API call
             const routeConfig = modelRoutingConfig[model];
             const useOpenRouter = routeConfig?.useOpenRouter ?? false;
-
-            // Extract message ID from the last user message for logging purposes
-            const lastUserMessageId = messages
-                .filter((msg: any) => msg.role === 'user')
-                .pop()?.id;
 
             // Clean messages - remove id, model, and other fields that providers don't expect
             const cleanedMessages = messages.map((msg: any) => ({
@@ -286,7 +283,7 @@ async function main() {
                 completion_tokens: outputTokens,
                 total_tokens: totalTokens,
                 status: 'success',
-                message_id: lastUserMessageId,
+                message_id: userMessageId,
             });
             if (usageError) {
                 console.error('Failed to log usage:', usageError.message);
