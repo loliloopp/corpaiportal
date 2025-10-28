@@ -41,3 +41,8 @@ export const getConfiguredModels = async (): Promise<string[]> => {
     const response = await proxyApi.get<string[]>('/api/v1/configured-models');
     return response;
 };
+
+export const getDatabaseModels = async (): Promise<Array<{ id: string; name: string; provider: string }>> => {
+    const response = await proxyApi.get<Array<{ id: string; name: string; provider: string }>>('/api/v1/models');
+    return response;
+};

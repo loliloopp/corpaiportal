@@ -122,6 +122,23 @@ async function main() {
         }
     });
 
+    app.get('/api/v1/models', async (req, res) => {
+        console.log("GET /api/v1/models hit");
+        try {
+            const { data, error } = await supabase.from('models').select('model_id, display_name, provider');
+            if (error) throw error;
+            const models = data?.map((row: any) => ({
+                id: row.model_id,
+                name: row.display_name,
+                provider: row.provider,
+            })) || [];
+            res.status(200).json(models);
+        } catch (error: any) {
+            console.error("Error fetching models:", error);
+            res.status(500).json({ error: 'Failed to fetch models', details: error.message });
+        }
+    });
+
     app.get('/api/v1/model-routing', async (req, res) => {
         console.log("GET /api/v1/model-routing hit");
         try {
