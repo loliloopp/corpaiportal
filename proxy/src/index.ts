@@ -190,6 +190,11 @@ async function main() {
             const routeConfig = modelRoutingConfig[model];
             const useOpenRouter = routeConfig?.useOpenRouter ?? false;
 
+            // Extract message ID from the last user message for logging purposes
+            const lastUserMessageId = messages
+                .filter((msg: any) => msg.role === 'user')
+                .pop()?.id;
+
             // Clean messages - remove id, model, and other fields that providers don't expect
             const cleanedMessages = messages.map((msg: any) => ({
                 role: msg.role,
@@ -270,7 +275,7 @@ async function main() {
             // Log usage and token counts
             // For now, count tokens as input + output tokens
             // OpenAI-compatible response structure: { choices: [{ message: { content } }], usage: { prompt_tokens, completion_tokens } }
-            const inputTokens = aiResponse.data.usage?.prompt_tokens || Math.ceil(messages.map((m: any) => m.content).join(' ').split(' ').length / 0.75);
+            const inputTokens = aiResponse.data.usage?.prompt_tokens || Math.ceil(cleanedMessages.map((m: any) => m.content).join(' ').split(' ').length / 0.75);
             const outputTokens = aiResponse.data.usage?.completion_tokens || Math.ceil(assistantContent.split(' ').length / 0.75);
             const totalTokens = inputTokens + outputTokens;
 
@@ -281,6 +286,7 @@ async function main() {
                 completion_tokens: outputTokens,
                 total_tokens: totalTokens,
                 status: 'success',
+                message_id: lastUserMessageId,
             });
             if (usageError) {
                 console.error('Failed to log usage:', usageError.message);
