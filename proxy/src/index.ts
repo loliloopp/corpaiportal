@@ -37,7 +37,7 @@ async function loadModelRoutingConfig(supabase: SupabaseClient) {
     try {
         const { data, error } = await supabase.from('model_routing_config').select('*');
         if (error) throw error;
-        
+
         const newConfig: typeof modelRoutingConfig = {};
         data?.forEach((config: any) => {
             newConfig[config.model_id] = {
@@ -61,9 +61,12 @@ async function main() {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!supabaseUrl || !supabaseServiceRoleKey) {
-        throw new Error('Supabase environment variables are not set.');
+        console.error('Supabase environment variables are not set.');
+        process.exit(1);
     }
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+    console.log("Supabase client created.");
+
 
     // 2. Initial data loading
     await loadModelRoutingConfig(supabase);
@@ -79,11 +82,19 @@ async function main() {
     app.use(express.json());
 
     // 4. Define Routes
-    app.get('/test', (req, res) => res.status(200).send('Test route is working!'));
-    app.get('/api/health', (req, res) => res.status(200).send('Proxy server is running'));
+    console.log("Defining routes...");
+    app.get('/test', (req, res) => {
+        console.log("GET /test hit");
+        res.status(200).send('Test route is working!');
+    });
+
+    app.get('/api/health', (req, res) => {
+        console.log("GET /api/health hit");
+        res.status(200).send('Proxy server is running');
+    });
 
     app.get('/api/v1/openrouter-models', async (req, res) => {
-        // This route doesn't need Supabase auth
+        console.log("GET /api/v1/openrouter-models hit");
         try {
             if (cachedModels && (Date.now() - cacheTimestamp < CACHE_DURATION)) {
                 return res.status(200).json(cachedModels);
@@ -93,23 +104,25 @@ async function main() {
             cacheTimestamp = Date.now();
             res.status(200).json(cachedModels);
         } catch (error) {
+            console.error('Error fetching from OpenRouter:', error);
             res.status(500).json({ error: 'Failed to fetch models from OpenRouter' });
         }
     });
 
     app.get('/api/v1/model-routing', async (req, res) => {
-        // This route is for admins, but we trust the frontend to protect it.
+        console.log("GET /api/v1/model-routing hit");
         try {
             const { data, error } = await supabase.from('model_routing_config').select('*');
             if (error) throw error;
             res.status(200).json(data);
-        } catch (error) {
-            res.status(500).json({ error: 'Failed to fetch model routing configuration' });
+        } catch (error: any) {
+            console.error("Error fetching model routing:", error);
+            res.status(500).json({ error: 'Failed to fetch model routing configuration', details: error.message });
         }
     });
 
     app.put('/api/v1/model-routing/:modelId', async (req, res) => {
-        // Also admin-only
+        console.log(`PUT /api/v1/model-routing/${req.params.modelId} hit`);
         try {
             const { modelId } = req.params;
             const { useOpenRouter, openRouterModelId } = req.body;
@@ -121,37 +134,48 @@ async function main() {
             if (error) throw error;
             await loadModelRoutingConfig(supabase); // Reload config
             res.status(200).json(data);
-        } catch (error) {
-            res.status(500).json({ error: 'Failed to update model routing configuration' });
+        } catch (error: any) {
+            console.error("Error updating model routing:", error);
+            res.status(500).json({ error: 'Failed to update model routing configuration', details: error.message });
         }
     });
 
     app.post('/api/v1/chat', async (req, res) => {
-        // This is the only route that requires full user auth and Supabase checks
+        console.log("POST /api/v1/chat hit");
         const { model, messages, jwt } = req.body;
         if (!model || !messages || !jwt) {
             return res.status(400).json({ error: 'Missing required fields.' });
         }
         try {
             const { data: { user }, error: userError } = await supabase.auth.getUser(jwt);
-            if (userError || !user) return res.status(401).json({ error: 'Invalid JWT.' });
+            if (userError || !user) {
+                console.error("Auth error:", userError);
+                return res.status(401).json({ error: 'Invalid JWT.' });
+            }
 
-            // (rest of the chat logic)
+            // (rest of the chat logic will be implemented here)
+            // For now, just a placeholder response
+            console.log(`Chat request for model ${model} by user ${user.id}`);
             res.status(200).json({ message: "Chat logic placeholder" });
 
-        } catch (error) {
-            res.status(500).json({ error: 'Internal server error.' });
+    } catch (error: any) {
+            console.error("Chat endpoint error:", error);
+            res.status(500).json({ error: 'Internal server error.', details: error.message });
         }
     });
+    console.log("Routes defined.");
+
 
     // 5. Start Server
-app.listen(port, () => {
-    console.log(`Proxy server listening at http://localhost:${port}`);
+    app.listen(port, () => {
+        console.log(`✅ Proxy server is running and listening at http://localhost:${port}`);
     });
 }
 
+// =================================================================
 // Run the application
+// =================================================================
 main().catch(error => {
-    console.error('Failed to start proxy server:', error);
+    console.error('💥 Failed to start proxy server:', error);
     process.exit(1);
 });
