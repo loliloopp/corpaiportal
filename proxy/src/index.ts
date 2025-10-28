@@ -271,7 +271,9 @@ async function main() {
             const { error: usageError } = await supabase.from('usage_logs').insert({
                 user_id: user.id,
                 model: model,
-                tokens_used: totalTokens,
+                prompt_tokens: inputTokens,
+                completion_tokens: outputTokens,
+                total_tokens: totalTokens,
                 status: 'success',
             });
             if (usageError) {
