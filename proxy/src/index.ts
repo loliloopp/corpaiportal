@@ -142,24 +142,141 @@ async function main() {
 
     app.post('/api/v1/chat', async (req, res) => {
         console.log("POST /api/v1/chat hit");
-        const { model, messages, jwt } = req.body;
+        const { model, messages, jwt, conversationId: convId } = req.body;
+        let conversationId = convId;
+
         if (!model || !messages || !jwt) {
             return res.status(400).json({ error: 'Missing required fields.' });
         }
+
         try {
+            // 1. Authenticate user
             const { data: { user }, error: userError } = await supabase.auth.getUser(jwt);
             if (userError || !user) {
                 console.error("Auth error:", userError);
                 return res.status(401).json({ error: 'Invalid JWT.' });
             }
-
-            // (rest of the chat logic will be implemented here)
-            // For now, just a placeholder response
             console.log(`Chat request for model ${model} by user ${user.id}`);
-            res.status(200).json({ message: "Chat logic placeholder" });
 
-    } catch (error: any) {
-            console.error("Chat endpoint error:", error);
+            // 2. Create conversation if it's a new one
+            if (!conversationId) {
+                const { data: newConversation, error: createError } = await supabase
+                    .from('conversations')
+                    .insert({ user_id: user.id, title: messages[0]?.content.substring(0, 50) || 'New Chat' })
+                    .select()
+                    .single();
+
+                if (createError) throw createError;
+                conversationId = newConversation.id;
+                console.log(`Created new conversation with ID: ${conversationId}`);
+            }
+
+            // 3. Save user message
+            const userMessage = messages[messages.length - 1];
+            const { error: saveMessageError } = await supabase.from('messages').insert({
+                conversation_id: conversationId,
+                user_id: user.id,
+                role: 'user',
+                content: userMessage.content,
+            });
+            if (saveMessageError) throw saveMessageError;
+            console.log(`Saved user message to conversation ${conversationId}`);
+
+
+            // TODO: Implement user limits check here
+
+
+            // 4. Determine routing and prepare API call
+            const routeConfig = modelRoutingConfig[model];
+            const useOpenRouter = routeConfig?.useOpenRouter ?? false;
+
+            let targetUrl: string;
+            let apiKey: string | undefined;
+            let provider: string;
+            let finalModelId: string;
+            let requestBody: any;
+
+            if (useOpenRouter && OPENROUTER_CONFIG.apiKey) {
+                console.log(`Routing to OpenRouter for model: ${model}`);
+                targetUrl = OPENROUTER_CONFIG.url;
+                apiKey = OPENROUTER_CONFIG.apiKey;
+                provider = OPENROUTER_CONFIG.provider;
+                finalModelId = routeConfig?.openRouterModelId || model; // Fallback to original model ID
+                requestBody = { model: finalModelId, messages };
+            } else {
+                console.log(`Routing to direct API for model: ${model}`);
+                const providerConfig = AI_PROVIDERS_CONFIG[model];
+                if (!providerConfig || !providerConfig.apiKey) {
+                    throw new Error(`Configuration for model ${model} is missing or incomplete.`);
+                }
+                targetUrl = providerConfig.url;
+                apiKey = providerConfig.apiKey;
+                provider = providerConfig.provider;
+                finalModelId = model;
+                
+                if (provider === 'gemini') {
+                    // Gemini has a different payload structure
+                    requestBody = {
+                        contents: messages
+                            .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
+                            .map((msg: any) => ({
+                                role: msg.role === 'assistant' ? 'model' : 'user',
+                                parts: [{ text: msg.content }],
+                            })),
+                    };
+                } else {
+                    // OpenAI-compatible payload
+                    requestBody = { model: finalModelId, messages };
+                }
+            }
+            
+            if (!apiKey) {
+                 throw new Error(`API key for provider ${provider} is not configured.`);
+            }
+
+            // 5. Make the request to the AI provider
+            console.log(`Sending request to ${provider} at ${targetUrl}`);
+            const aiResponse = await axios.post(targetUrl, requestBody, {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            // 6. Normalize the response
+            let assistantContent: string;
+            if (provider === 'gemini') {
+                assistantContent = aiResponse.data.candidates[0].content.parts[0].text;
+            } else { // OpenAI and OpenRouter
+                assistantContent = aiResponse.data.choices[0].message.content;
+            }
+
+            // 7. Save assistant message
+            const { error: saveAssistantError } = await supabase.from('messages').insert({
+                conversation_id: conversationId,
+                user_id: user.id,
+                role: 'assistant',
+                content: assistantContent,
+            });
+            if (saveAssistantError) throw saveAssistantError;
+            console.log(`Saved assistant message to conversation ${conversationId}`);
+
+            // TODO: Log usage and token counts
+
+            // 8. Send response back to the client
+            const clientResponse = {
+                id: conversationId,
+                choices: [{
+                    message: {
+                        content: assistantContent,
+                    },
+                }],
+            };
+
+            res.status(200).json(clientResponse);
+
+        } catch (error: any) {
+            console.error("Chat endpoint error:", error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
             res.status(500).json({ error: 'Internal server error.', details: error.message });
         }
     });
