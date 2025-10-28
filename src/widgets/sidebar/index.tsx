@@ -6,6 +6,7 @@ import { useChatStore } from '@/entities/chat/model/chat-store';
 import { useAuthStore } from '@/features/auth';
 import { useThemeContext } from '@/app/providers/theme-provider';
 import type { MenuProps } from 'antd';
+import styles from './sidebar.module.css';
 
 const { Sider } = Layout;
 
@@ -47,60 +48,63 @@ export const Sidebar = () => {
   return (
     <Sider 
       collapsible 
-      collapsed={collapsed} 
+      collapsed={collapsed}
       onCollapse={(value) => setCollapsed(value)}
+      className={styles.sidebar}
       style={{ 
         background: isDark ? '#363535' : '#ffffff',
-        borderRight: 'none'
+        borderRight: 0,
+        height: '100vh',
+        overflow: 'hidden',
+        padding: 0,
       }}
     >
-      <div style={{ 
-        padding: '20px 16px', 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        fontSize: 18,
-        fontWeight: 500,
-        color: isDark ? '#e8e8e8' : '#171717'
-      }}>
-        AI HUB
+      {/* Fixed header section */}
+      <div className={styles.siderTop}>
+        <div style={{ 
+          padding: '20px 16px', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          fontSize: 18,
+          fontWeight: 500,
+          color: isDark ? '#e8e8e8' : '#171717'
+        }}>
+          AI HUB
+        </div>
+        <div style={{ padding: '8px 12px' }}>
+          <Button 
+            type="default"
+            icon={<PlusOutlined />} 
+            onClick={handleNewChat}
+            block
+            style={{ 
+              marginBottom: 16,
+              height: 36,
+              border: isDark ? '1px solid #555555' : '1px solid #e5e5e5',
+              borderRadius: 6,
+              background: isDark ? '#4a4a4a' : '#ffffff',
+              color: isDark ? '#e8e8e8' : '#171717'
+            }}
+          >
+            {!collapsed && 'Новый чат'}
+          </Button>
+        </div>
       </div>
-      <div style={{ padding: '8px 12px' }}>
-        <Button 
-          type="default"
-          icon={<PlusOutlined />} 
-          onClick={handleNewChat}
-          block
-          style={{ 
-            marginBottom: 16,
-            height: 36,
-            border: isDark ? '1px solid #555555' : '1px solid #e5e5e5',
-            borderRadius: 6,
-            background: isDark ? '#4a4a4a' : '#ffffff',
-            color: isDark ? '#e8e8e8' : '#171717'
-          }}
-        >
-          {!collapsed && 'Новый чат'}
-        </Button>
+
+      {/* Scrollable history section */}
+      <div className={styles.siderHistory}>
+        <Menu 
+          theme="light" 
+          mode="inline" 
+          items={[{
+            key: 'history',
+            label: 'История',
+            icon: <MessageOutlined />,
+            children: historyItems,
+          }]}
+        />
       </div>
-      <Menu 
-        theme="light" 
-        mode="inline" 
-        selectedKeys={[location.pathname]}
-        style={{ background: 'transparent', borderRight: 'none' }}
-        items={mainMenuItems}
-      />
-      <Menu 
-        theme="light" 
-        mode="inline" 
-        style={{ marginTop: 'auto', background: 'transparent', borderRight: 'none' }}
-        items={[{
-          key: 'history',
-          label: 'История',
-          icon: <MessageOutlined />,
-          children: historyItems,
-        }]}
-      />
     </Sider>
   );
 };

@@ -1,0 +1,28 @@
+/* Apply flex layout to Sider's internal children container */
+.sidebar :global(.ant-layout-sider-children) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Fixed top section (header and buttons) */
+.siderTop {
+  flex: 0 0 auto;
+}
+
+/* Scrollable history section */
+.siderHistory {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Menu styling - no height, no overflow */
+.siderHistory :global(.ant-menu) {
+  background: transparent;
+  border-right: 0;
+  padding: 0;
+  margin: 0;
+}
