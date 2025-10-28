@@ -264,7 +264,7 @@ async function main() {
             // Log usage and token counts
             // For now, count tokens as input + output tokens
             // OpenAI-compatible response structure: { choices: [{ message: { content } }], usage: { prompt_tokens, completion_tokens } }
-            const inputTokens = aiResponse.data.usage?.prompt_tokens || Math.ceil(conversationHistory.join(' ').split(' ').length / 0.75);
+            const inputTokens = aiResponse.data.usage?.prompt_tokens || Math.ceil(messages.map((m: any) => m.content).join(' ').split(' ').length / 0.75);
             const outputTokens = aiResponse.data.usage?.completion_tokens || Math.ceil(assistantContent.split(' ').length / 0.75);
             const totalTokens = inputTokens + outputTokens;
 
