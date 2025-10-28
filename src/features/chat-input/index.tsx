@@ -12,9 +12,12 @@ interface ChatInputFormProps {
 
 export const ChatInputForm: React.FC<ChatInputFormProps> = ({ onSendMessage, loading }) => {
   const [form] = Form.useForm();
-  const { selectedModel, setSelectedModel, availableModels } = useChatStore();
+  const { selectedModel, setSelectedModel, availableModels, openRouterModels } = useChatStore();
   const { theme } = useThemeContext();
   const isDark = theme === 'dark';
+
+  // Combine all available models
+  const allModels = [...availableModels, ...openRouterModels];
 
   const handleFinish = (values: { message: string }) => {
     if (values.message.trim()) {
@@ -51,7 +54,7 @@ export const ChatInputForm: React.FC<ChatInputFormProps> = ({ onSendMessage, loa
         />
       </Form.Item>
       <Form.Item style={{ marginBottom: 0, minWidth: 220 }}>
-        <ModelSelector value={selectedModel} onChange={setSelectedModel} availableModels={availableModels} />
+        <ModelSelector value={selectedModel} onChange={setSelectedModel} availableModels={allModels} />
       </Form.Item>
     </Form>
   );

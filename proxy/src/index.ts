@@ -48,6 +48,13 @@ const AI_PROVIDERS_CONFIG: Record<string, { provider: string, url: string, apiKe
     'gemini-2.5-flash': { provider: 'gemini', url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`, apiKey: process.env.GEMINI_API_KEY },
 };
 
+// OpenRouter configuration - handles all models with "/" in their ID
+const OPENROUTER_CONFIG = {
+    provider: 'openrouter',
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: process.env.OPENROUTER_API_KEY,
+};
+
 
 // Main chat proxy endpoint
 app.post('/api/v1/chat', async (req: Request, res: Response) => {
@@ -115,18 +122,39 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
             return res.status(429).json({ error: 'Дневной лимит запросов исчерпан.' });
         }
         
-        const providerConfig = AI_PROVIDERS_CONFIG[model];
-        if (!providerConfig) {
-            return res.status(400).json({ error: `Model ${model} is not configured on the proxy.` });
-        }
-        if (!providerConfig.apiKey) {
-            return res.status(500).json({ error: `API key for ${providerConfig.provider} is not configured on the server.` });
+        // Determine provider config: check routing configuration first
+        let providerConfig;
+        let actualModelId = model; // The actual model ID to send to the provider
+        
+        const routingConfig = modelRoutingConfig[model];
+        if (routingConfig && routingConfig.useOpenRouter) {
+            // Use OpenRouter for this model
+            providerConfig = OPENROUTER_CONFIG;
+            actualModelId = routingConfig.openRouterModelId; // Use OpenRouter model ID
+            if (!providerConfig.apiKey) {
+                return res.status(500).json({ error: 'OpenRouter API key is not configured on the server.' });
+            }
+        } else if (model.includes('/')) {
+            // Direct OpenRouter model request (format: provider/model)
+            providerConfig = OPENROUTER_CONFIG;
+            if (!providerConfig.apiKey) {
+                return res.status(500).json({ error: 'OpenRouter API key is not configured on the server.' });
+            }
+        } else {
+            // Use direct provider API
+            providerConfig = AI_PROVIDERS_CONFIG[model];
+            if (!providerConfig) {
+                return res.status(400).json({ error: `Model ${model} is not configured on the proxy.` });
+            }
+            if (!providerConfig.apiKey) {
+                return res.status(500).json({ error: `API key for ${providerConfig.provider} is not configured on the server.` });
+            }
         }
 
         let requestBody;
         let headers;
         
-        // Adapt body and headers for Gemini
+        // Adapt body and headers for different providers
         if (providerConfig.provider === 'gemini') {
             requestBody = {
                 contents: messages.map((msg: any) => ({
@@ -135,8 +163,16 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
                 })),
             };
             headers = { 'Content-Type': 'application/json' };
+        } else if (providerConfig.provider === 'openrouter') {
+            requestBody = { model: actualModelId, messages }; // Use actualModelId for OpenRouter
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${providerConfig.apiKey}`,
+                'HTTP-Referer': process.env.APP_URL || 'http://localhost:5173',
+                'X-Title': 'Corporate AI Portal',
+            };
         } else {
-            requestBody = { model, messages };
+            requestBody = { model: actualModelId, messages }; // Use actualModelId
             headers = {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${providerConfig.apiKey}`,
@@ -198,6 +234,99 @@ app.post('/api/v1/chat', async (req: Request, res: Response) => {
 
 app.get('/api/health', (req: Request, res: Response) => {
     res.status(200).send('Proxy server is running');
+});
+
+// Cache for OpenRouter models list
+let cachedModels: any = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 3600000; // 1 hour in milliseconds
+
+// Cache for model routing configuration
+let modelRoutingConfig: Record<string, { useOpenRouter: boolean; openRouterModelId: string }> = {};
+
+// Load model routing configuration from database
+async function loadModelRoutingConfig() {
+    try {
+        const { data, error } = await supabase.from('model_routing_config').select('*');
+        if (error) throw error;
+        
+        modelRoutingConfig = {};
+        data?.forEach((config: any) => {
+            modelRoutingConfig[config.model_id] = {
+                useOpenRouter: config.use_openrouter,
+                openRouterModelId: config.openrouter_model_id,
+            };
+        });
+        
+        console.log('>>> Model routing configuration loaded:', modelRoutingConfig);
+    } catch (error: any) {
+        console.error('Failed to load model routing config:', error.message);
+    }
+}
+
+// Load routing config on startup
+loadModelRoutingConfig();
+
+// Endpoint to get available OpenRouter models
+app.get('/api/v1/openrouter-models', async (req: Request, res: Response) => {
+    try {
+        const now = Date.now();
+        
+        // Return cached data if available and fresh
+        if (cachedModels && (now - cacheTimestamp) < CACHE_DURATION) {
+            return res.status(200).json(cachedModels);
+        }
+
+        // Fetch fresh data from OpenRouter
+        const response = await axios.get('https://openrouter.ai/api/v1/models');
+        cachedModels = response.data;
+        cacheTimestamp = now;
+
+        res.status(200).json(cachedModels);
+    } catch (error: any) {
+        console.error('Error fetching OpenRouter models:', error.message);
+        res.status(500).json({ error: 'Failed to fetch models from OpenRouter' });
+    }
+});
+
+// Endpoint to get model routing configuration
+app.get('/api/v1/model-routing', async (req: Request, res: Response) => {
+    try {
+        const { data, error } = await supabase.from('model_routing_config').select('*');
+        if (error) throw error;
+        res.status(200).json(data);
+    } catch (error: any) {
+        console.error('Error fetching model routing config:', error.message);
+        res.status(500).json({ error: 'Failed to fetch model routing configuration' });
+    }
+});
+
+// Endpoint to update model routing configuration
+app.put('/api/v1/model-routing/:modelId', async (req: Request, res: Response) => {
+    try {
+        const { modelId } = req.params;
+        const { useOpenRouter, openRouterModelId } = req.body;
+
+        const { data, error } = await supabase
+            .from('model_routing_config')
+            .update({
+                use_openrouter: useOpenRouter,
+                openrouter_model_id: openRouterModelId,
+            })
+            .eq('model_id', modelId)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        // Reload configuration
+        await loadModelRoutingConfig();
+
+        res.status(200).json(data);
+    } catch (error: any) {
+        console.error('Error updating model routing config:', error.message);
+        res.status(500).json({ error: 'Failed to update model routing configuration' });
+    }
 });
 
 app.listen(port, () => {

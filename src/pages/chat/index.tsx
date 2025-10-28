@@ -12,6 +12,7 @@ const ChatPage = () => {
     activeConversation, 
     setActiveConversation,
     fetchAvailableModels,
+    fetchOpenRouterModels,
   } = useChatStore();
   const { conversationId } = useParams<{ conversationId: string }>();
   const { user } = useAuthStore();
@@ -27,6 +28,11 @@ const ChatPage = () => {
       fetchAvailableModels(user.id);
     }
   }, [user, fetchAvailableModels]);
+
+  useEffect(() => {
+    // Load OpenRouter models on mount
+    fetchOpenRouterModels();
+  }, [fetchOpenRouterModels]);
 
   return <ChatWindow messages={messages} onSendMessage={sendMessage} loading={loading} />;
 };

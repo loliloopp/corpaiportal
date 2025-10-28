@@ -9,6 +9,7 @@ import { sendAIRequest } from '@/shared/api/proxy-api';
 import { logUsage } from '@/entities/limits';
 import { Model, MODELS } from '@/shared/config/models.config';
 import { getModelsWithAccess, ModelWithAccess } from '@/entities/models/api/models-api';
+import { openRouterApi, OpenRouterModel } from '@/entities/models/api/openrouter-api';
 
 type Conversation = {
     id: string;
@@ -22,11 +23,13 @@ interface ChatState {
   activeConversation: string | null;
   selectedModel: string;
   availableModels: Model[]; // Store available models
+  openRouterModels: Model[]; // Store OpenRouter models separately
   loading: boolean;
   onSendMessageStart: (() => void) | null; // Callback
   fetchConversations: (userId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
   fetchAvailableModels: (userId: string) => Promise<void>; // New function
+  fetchOpenRouterModels: () => Promise<void>; // Load OpenRouter models
   setActiveConversation: (conversationId: string | null) => void;
   setSelectedModel: (model: string) => void;
   sendMessage: (content: string) => void;
@@ -38,6 +41,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeConversation: null,
   selectedModel: 'grok-4-fast',
   availableModels: [], // Initial state
+  openRouterModels: [], // Initial state for OpenRouter models
   loading: false,
   onSendMessageStart: null, // Initial value
   fetchConversations: async (userId: string) => {
@@ -80,6 +84,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       console.error('Error fetching available models:', error);
       set({ availableModels: [] }); // Set to empty on error
+    }
+  },
+  fetchOpenRouterModels: async () => {
+    try {
+      const models = await openRouterApi.getModels();
+      
+      // Transform OpenRouter models to our Model format
+      const transformedModels: Model[] = models.map((m: OpenRouterModel) => ({
+        id: m.id,
+        name: m.name,
+        provider: 'openrouter' as const,
+        description: m.description,
+        context_length: m.context_length,
+        pricing: m.pricing ? {
+          prompt: parseFloat(m.pricing.prompt),
+          completion: parseFloat(m.pricing.completion),
+        } : undefined,
+      }));
+
+      set({ openRouterModels: transformedModels });
+
+    } catch (error) {
+      console.error('Error fetching OpenRouter models:', error);
+      set({ openRouterModels: [] });
     }
   },
   setActiveConversation: (conversationId: string | null) => {

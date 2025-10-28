@@ -4,6 +4,7 @@ import { EditOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getAllUsers, updateUserProfile, UserProfile } from '@/entities/users/api/users-api';
 import { getModelsWithAccess, setModelPermission, ModelWithAccess } from '@/entities/models/api/models-api';
+import ModelRoutingTable from '@/widgets/model-routing-table';
 
 const { Title } = Typography;
 const { Option } = Select;
@@ -306,6 +307,10 @@ const AdminPage: React.FC = () => {
           }}
         />
       </Form>
+
+      {/* Model Routing Management Section */}
+      <ModelRoutingTable />
+
       <style>{`
         .ant-table-row-light {
           background-color: #ffffff;
