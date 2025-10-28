@@ -170,6 +170,11 @@ async function main() {
     app.listen(port, () => {
         console.log(`✅ Proxy server is running and listening at http://localhost:${port}`);
     });
+
+    // Heartbeat to keep the process alive
+    setInterval(() => {
+        console.log('Heartbeat: process is alive.');
+    }, 10000);
 }
 
 // =================================================================
