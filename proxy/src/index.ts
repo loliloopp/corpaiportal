@@ -109,6 +109,19 @@ async function main() {
         }
     });
 
+    app.get('/api/v1/configured-models', async (req, res) => {
+        console.log("GET /api/v1/configured-models hit");
+        try {
+            const { data, error } = await supabase.from('model_routing_config').select('model_id');
+            if (error) throw error;
+            const modelIds = data?.map((row: any) => row.model_id) || [];
+            res.status(200).json(modelIds);
+        } catch (error: any) {
+            console.error("Error fetching configured models:", error);
+            res.status(500).json({ error: 'Failed to fetch configured models', details: error.message });
+        }
+    });
+
     app.get('/api/v1/model-routing', async (req, res) => {
         console.log("GET /api/v1/model-routing hit");
         try {

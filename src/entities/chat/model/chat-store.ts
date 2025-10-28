@@ -8,7 +8,7 @@ import { useAuthStore } from '@/features/auth';
 import { sendAIRequest } from '@/shared/api/proxy-api';
 import { logUsage } from '@/entities/limits';
 import { Model, MODELS } from '@/shared/config/models.config';
-import { getModelsWithAccess, ModelWithAccess } from '@/entities/models/api/models-api';
+import { getModelsWithAccess, ModelWithAccess, getConfiguredModels } from '@/entities/models/api/models-api';
 import { openRouterApi, OpenRouterModel } from '@/entities/models/api/openrouter-api';
 
 type Conversation = {
@@ -67,14 +67,11 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
     fetchAvailableModels: async (userId: string) => {
       try {
-        const modelsWithAccess = await getModelsWithAccess(userId);
-        const userModels = modelsWithAccess
-          .filter(m => m.has_access)
-          .map(m => ({
-              id: m.model_id,
-              name: m.display_name,
-              provider: m.provider,
-          } as Model));
+        // Get only models that are configured in admin panel
+        const configuredModelIds = await getConfiguredModels();
+        
+        // Filter MODELS to only include those that are configured
+        const userModels = MODELS.filter(m => configuredModelIds.includes(m.id));
           
         set({ availableModels: userModels });
 

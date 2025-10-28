@@ -1,4 +1,5 @@
 import { supabase } from '@/shared/lib/supabase';
+import { proxyApi } from '@/shared/api/proxy-api';
 
 // This corresponds to the return type of the get_available_models_for_user RPC
 export interface ModelWithAccess {
@@ -34,4 +35,9 @@ export const setModelPermission = async (userId: string, modelId: string, hasAcc
         throw error;
     }
     return null;
+};
+
+export const getConfiguredModels = async (): Promise<string[]> => {
+    const response = await proxyApi.get<string[]>('/api/v1/configured-models');
+    return response;
 };
