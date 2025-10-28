@@ -287,6 +287,11 @@ async function main() {
     app.listen(port, () => {
         console.log(`✅ Proxy server is running and listening at http://localhost:${port}`);
     });
+
+    // This promise never resolves, which will keep the process running.
+    // This is a workaround for an unusual environment issue where app.listen()
+    // alone is not keeping the process alive.
+    await new Promise(() => {});
 }
 
 // =================================================================

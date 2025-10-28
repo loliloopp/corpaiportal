@@ -1,11 +1,18 @@
 import React from 'react';
-import { Table, Select, Typography, message } from 'antd';
+import { Table, Switch, Typography, message, Spin } from 'antd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { modelRoutingApi, ModelRoutingConfig } from '@/entities/models/api/model-routing-api';
 import { MODELS, MODEL_OPENROUTER_MAPPING } from '@/shared/config/models.config';
 
 const { Title } = Typography;
-const { Option } = Select;
+
+const PROVIDER_NAMES: Record<string, string> = {
+    openai: 'OpenAI',
+    deepseek: 'DeepSeek',
+    gemini: 'Google Gemini',
+    grok: 'Grok',
+    openrouter: 'OpenRouter.ai',
+};
 
 const ModelRoutingTable: React.FC = () => {
     const queryClient = useQueryClient();
@@ -26,6 +33,18 @@ const ModelRoutingTable: React.FC = () => {
             message.error(`Ошибка при обновлении: ${error.message}`);
         },
     });
+
+    // Sort data alphabetically by model name
+    const sortedData = React.useMemo(() => {
+        if (!routingConfig) return [];
+        return [...routingConfig].sort((a, b) => {
+            const modelA = MODELS.find(m => m.id === a.model_id);
+            const modelB = MODELS.find(m => m.id === b.model_id);
+            const nameA = modelA?.name || a.model_id;
+            const nameB = modelB?.name || b.model_id;
+            return nameA.localeCompare(nameB);
+        });
+    }, [routingConfig]);
 
     const columns = [
         {
@@ -49,7 +68,8 @@ const ModelRoutingTable: React.FC = () => {
             align: 'center' as const,
             render: (modelId: string) => {
                 const model = MODELS.find(m => m.id === modelId);
-                return model?.provider || 'N/A';
+                const providerName = model?.provider ? PROVIDER_NAMES[model.provider] || model.provider : 'N/A';
+                return providerName;
             },
         },
         {
@@ -58,23 +78,20 @@ const ModelRoutingTable: React.FC = () => {
             key: 'routing',
             align: 'center' as const,
             render: (useOpenRouter: boolean, record: ModelRoutingConfig) => (
-                <Select
-                    value={useOpenRouter ? 'openrouter' : 'direct'}
-                    style={{ width: 180 }}
-                    onChange={(value) => {
-                        const newUseOpenRouter = value === 'openrouter';
+                <Switch
+                    checked={useOpenRouter}
+                    onChange={(checked) => {
                         const openRouterModelId = MODEL_OPENROUTER_MAPPING[record.model_id] || '';
                         updateRoutingMutation.mutate({
                             modelId: record.model_id,
-                            useOpenRouter: newUseOpenRouter,
+                            useOpenRouter: checked,
                             openRouterModelId,
                         });
                     }}
-                    loading={updateRoutingMutation.isPending}
-                >
-                    <Option value="direct">Прямой API</Option>
-                    <Option value="openrouter">OpenRouter</Option>
-                </Select>
+                    disabled={updateRoutingMutation.isPending}
+                    checkedChildren="OpenRouter"
+                    unCheckedChildren="Прямой"
+                />
             ),
         },
         {
@@ -91,16 +108,16 @@ const ModelRoutingTable: React.FC = () => {
             dataIndex: 'use_openrouter',
             key: 'status',
             align: 'center' as const,
-            render: (useOpenRouter: boolean) => {
-                const model = MODELS.find(m => m.id);
-                const providerName = model?.provider.toUpperCase() || 'N/A';
+            render: (useOpenRouter: boolean, record: ModelRoutingConfig) => {
+                const model = MODELS.find(m => m.id === record.model_id);
+                const providerName = model?.provider ? PROVIDER_NAMES[model.provider] || model.provider.toUpperCase() : 'N/A';
                 return (
                     <span style={{ 
                         color: useOpenRouter ? '#1890ff' : '#52c41a',
                         fontWeight: 500,
                         fontSize: '0.85em'
                     }}>
-                        {useOpenRouter ? '🔀 OpenRouter' : `✓ ${providerName}`}
+                        {useOpenRouter ? '🔀 OpenRouter.ai' : `✓ ${providerName}`}
                     </span>
                 );
             },
@@ -110,16 +127,17 @@ const ModelRoutingTable: React.FC = () => {
     return (
         <div style={{ marginTop: 48 }}>
             <Title level={2}>Управление моделями</Title>
-            <Table
-                dataSource={routingConfig}
-                columns={columns}
-                rowKey="id"
-                loading={isLoading}
-                bordered={false}
-                scroll={{ x: 'auto' }}
-                rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
-                pagination={false}
-            />
+            <Spin spinning={isLoading}>
+                <Table
+                    dataSource={sortedData}
+                    columns={columns}
+                    rowKey="model_id"
+                    bordered={false}
+                    scroll={{ x: 'auto' }}
+                    rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
+                    pagination={false}
+                />
+            </Spin>
         </div>
     );
 };
