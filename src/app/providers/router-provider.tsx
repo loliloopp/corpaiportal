@@ -12,7 +12,7 @@ import { AdminRoute } from './admin-route';
 
 const PublicRoutes = () => {
   const { session, loading } = useAuthStore();
-  if (loading) return <Spin fullscreen />;
+
   return !session ? <Outlet /> : <Navigate to="/chat" replace />;
 };
 

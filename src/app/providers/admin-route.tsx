@@ -9,7 +9,7 @@ export const AdminRoute = () => {
     return <Spin fullscreen />;
   }
 
-  if (profile?.role !== 'admin') {
+  if (!profile || profile.role !== 'admin') {
     return <Navigate to="/chat" replace />;
   }
 
