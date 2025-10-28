@@ -36,7 +36,13 @@ const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
+// Configure CORS to allow requests from local development and production
+app.use(cors({
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000', 'http://185.200.179.0'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 
 const AI_PROVIDERS_CONFIG: Record<string, { provider: string, url: string, apiKey: string | undefined }> = {

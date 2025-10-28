@@ -43,3 +43,28 @@ export const sendAIRequest = async (model: string, messages: Message[], conversa
 
     return response.json();
 };
+
+// Proxy API helper object for making requests to proxy server endpoints
+export const proxyApi = {
+    async get<T = any>(endpoint: string): Promise<T> {
+        const response = await fetch(endpoint);
+        if (!response.ok) {
+            throw new Error(`API request failed: ${response.statusText}`);
+        }
+        return response.json();
+    },
+
+    async put<T = any>(endpoint: string, body: any): Promise<T> {
+        const response = await fetch(endpoint, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+        if (!response.ok) {
+            throw new Error(`API request failed: ${response.statusText}`);
+        }
+        return response.json();
+    },
+};
