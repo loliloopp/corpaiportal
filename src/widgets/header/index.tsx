@@ -38,10 +38,30 @@ const UsageStats = () => {
         queryKey: ['usageStats', user?.id],
         queryFn: async () => {
             if (!user) return null;
-            const { data, error } = await supabase.rpc('get_user_usage_stats', { p_user_id: user.id });
-            if (error) throw new Error(error.message);
-            // The RPC function returns a single object, not an array.
-            return data || { usage: 0, limit: 0 };
+            
+            // Get user's daily limit from profile
+            const { data: profileData, error: profileError } = await supabase
+                .from('user_profiles')
+                .select('daily_request_limit')
+                .eq('id', user.id)
+                .single();
+            
+            if (profileError) throw new Error(profileError.message);
+            
+            // Count successful requests for today
+            const { count, error: countError } = await supabase
+                .from('usage_logs')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', user.id)
+                .eq('status', 'success')
+                .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+            
+            if (countError) throw new Error(countError.message);
+            
+            return {
+                usage: count || 0,
+                limit: profileData?.daily_request_limit || 0
+            };
         },
         enabled: !!user,
         refetchInterval: 30000,

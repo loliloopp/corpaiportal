@@ -261,7 +261,25 @@ async function main() {
             if (saveAssistantError) throw saveAssistantError;
             console.log(`Saved assistant message to conversation ${conversationId}`);
 
-            // TODO: Log usage and token counts
+            // Log usage and token counts
+            // For now, count tokens as input + output tokens
+            // OpenAI-compatible response structure: { choices: [{ message: { content } }], usage: { prompt_tokens, completion_tokens } }
+            const inputTokens = aiResponse.data.usage?.prompt_tokens || Math.ceil(conversationHistory.join(' ').split(' ').length / 0.75);
+            const outputTokens = aiResponse.data.usage?.completion_tokens || Math.ceil(assistantContent.split(' ').length / 0.75);
+            const totalTokens = inputTokens + outputTokens;
+
+            const { error: usageError } = await supabase.from('usage_logs').insert({
+                user_id: user.id,
+                model: model,
+                tokens_used: totalTokens,
+                status: 'success',
+            });
+            if (usageError) {
+                console.error('Failed to log usage:', usageError.message);
+                // Don't throw - usage logging failure shouldn't break the response
+            } else {
+                console.log(`Logged usage: ${totalTokens} tokens for model ${model}`);
+            }
 
             // 8. Send response back to the client
             const clientResponse = {
