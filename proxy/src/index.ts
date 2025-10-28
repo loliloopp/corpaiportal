@@ -190,6 +190,12 @@ async function main() {
             const routeConfig = modelRoutingConfig[model];
             const useOpenRouter = routeConfig?.useOpenRouter ?? false;
 
+            // Clean messages - remove id, model, and other fields that providers don't expect
+            const cleanedMessages = messages.map((msg: any) => ({
+                role: msg.role,
+                content: msg.content,
+            }));
+
             let targetUrl: string;
             let apiKey: string | undefined;
             let provider: string;
@@ -202,7 +208,7 @@ async function main() {
                 apiKey = OPENROUTER_CONFIG.apiKey;
                 provider = OPENROUTER_CONFIG.provider;
                 finalModelId = routeConfig?.openRouterModelId || model; // Fallback to original model ID
-                requestBody = { model: finalModelId, messages };
+                requestBody = { model: finalModelId, messages: cleanedMessages };
             } else {
                 console.log(`Routing to direct API for model: ${model}`);
                 const providerConfig = AI_PROVIDERS_CONFIG[model];
@@ -217,7 +223,7 @@ async function main() {
                 if (provider === 'gemini') {
                     // Gemini has a different payload structure
                     requestBody = {
-                        contents: messages
+                        contents: cleanedMessages
                             .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
                             .map((msg: any) => ({
                                 role: msg.role === 'assistant' ? 'model' : 'user',
@@ -226,7 +232,7 @@ async function main() {
                     };
                 } else {
                     // OpenAI-compatible payload
-                    requestBody = { model: finalModelId, messages };
+                    requestBody = { model: finalModelId, messages: cleanedMessages };
                 }
             }
             
