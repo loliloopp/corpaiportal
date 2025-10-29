@@ -62,6 +62,9 @@ const AdminPage: React.FC = () => {
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const [editingKey, setEditingKey] = useState('');
+  const [emailFilter, setEmailFilter] = useState<string[]>([]);
+  const [limitFilter, setLimitFilter] = useState<number[]>([]);
+  const [pageSize, setPageSize] = useState(50);
 
   // Function to break text into words only (letters + digits with dots), skip pure digit separators
   const breakTextByWords = (text: string): string => {
@@ -170,6 +173,23 @@ const AdminPage: React.FC = () => {
       dataIndex: 'email', 
       key: 'email', 
       width: '25%',
+      sorter: (a: UserProfile, b: UserProfile) => {
+        const nameA = (a.display_name || a.email || '').toLowerCase();
+        const nameB = (b.display_name || b.email || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      },
+      filters: useMemo(() => {
+        if (!users) return [];
+        const uniqueEmails = Array.from(new Set(users.map(u => u.email || '').filter(Boolean)));
+        return uniqueEmails.map(email => ({
+          text: email,
+          value: email,
+        }));
+      }, [users]),
+      filteredValue: emailFilter,
+      onFilter: (value: any, record: UserProfile) => {
+        return record.email === value;
+      },
       render: (_: any, record: UserProfile) => (
         <div>
           <div style={{ fontWeight: 500 }}>{record.display_name || 'N/A'}</div>
@@ -231,6 +251,18 @@ const AdminPage: React.FC = () => {
       inputType: 'number',
       flex: 0.7,
       align: 'center' as const,
+      sorter: (a: UserProfile, b: UserProfile) => (a.daily_request_limit || 0) - (b.daily_request_limit || 0),
+      filters: useMemo(() => {
+        if (!users) return [];
+        const uniqueLimits = Array.from(new Set(users.map(u => u.daily_request_limit || 0)));
+        return uniqueLimits.sort((a, b) => a - b).map(limit => ({
+          text: String(limit),
+          value: limit,
+        }));
+      }, [users]),
+      filteredValue: limitFilter,
+      onFilter: (value: any, record: UserProfile) => (record.daily_request_limit || 0) === value,
+      render: (limit: number) => limit,
     },
   ];
 
@@ -304,6 +336,19 @@ const AdminPage: React.FC = () => {
           rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
           style={{
             borderCollapse: 'collapse',
+          }}
+          pagination={{
+            pageSize: pageSize,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            showSizeChanger: true,
+            showTotal: (total, range) => `${range[0]}-${range[1]} из ${total}`,
+          }}
+          onChange={(pagination, filters, sorter) => {
+            setEmailFilter(filters.email ? filters.email.map(String) : []);
+            setLimitFilter(filters.daily_request_limit ? filters.daily_request_limit.map(Number) : []);
+            if (pagination.pageSize) {
+              setPageSize(pagination.pageSize);
+            }
           }}
         />
       </Form>
