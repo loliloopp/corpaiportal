@@ -188,6 +188,37 @@ async function main() {
             }
             console.log(`Chat request for model ${model} by user ${user.id}`);
 
+            // 1.5 Check user request limits
+            const { data: profile, error: profileError } = await supabase
+                .from('user_profiles')
+                .select('daily_request_limit')
+                .eq('id', user.id)
+                .single();
+
+            if (profileError || !profile) {
+                console.error("Profile error:", profileError);
+                return res.status(500).json({ error: 'Could not fetch user profile.' });
+            }
+
+            const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+            const { count, error: countError } = await supabase
+                .from('usage_logs')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', user.id)
+                .gte('created_at', `${today}T00:00:00.000Z`);
+
+            if (countError) {
+                console.error("Usage count error:", countError);
+                return res.status(500).json({ error: 'Could not count user usage.' });
+            }
+
+            if (count !== null && count >= profile.daily_request_limit) {
+                console.log(`User ${user.id} has reached their daily limit of ${profile.daily_request_limit} requests.`);
+                return res.status(429).json({ error: 'You have reached your daily request limit.' });
+            }
+            console.log(`User ${user.id} usage: ${count}/${profile.daily_request_limit}`);
+
+
             // 2. Create conversation if it's a new one
             if (!conversationId) {
                 const { data: newConversation, error: createError } = await supabase

@@ -355,38 +355,141 @@ OPENROUTER_API_KEY=sk-or-v1-...
 
 ---
 
-## 6. Development vs Production
+## 6. Среды развертывания (Environments)
 
-### Local Development
-```bash
-# Terminal 1: Frontend
-npm run dev          # localhost:5173 или 192.168.8.38:5173
+В проекте существует два основных окружения: локальное для разработки и production на удаленном VPS.
 
-# Terminal 2: Proxy (mock)
-cd proxy && npm run dev  # localhost:3001
+### 1. Среда разработки (локально)
 
-# Vite автоматически проксирует /api/* → http://localhost:3001
+Предназначена для разработки и отладки фронтенда.
+
+- **Запуск**: `npm run dev` запускает Vite dev-сервер.
+- **Адрес**: `http://localhost:5173` (или `http://192.168.x.x:5173` для доступа из локальной сети).
+- **Проксирование API**: Vite, согласно конфигурации в `vite.config.ts`, перенаправляет все запросы с `/api/*` напрямую на **удаленный** прокси-сервер (`http://185.200.179.0:3001`). Это позволяет вести разработку фронтенда, не запуская прокси-сервер локально.
+
+```typescript
+// vite.config.ts
+// ...
+server: {
+  proxy: {
+    '/api': {
+      target: 'http://185.200.179.0:3001',
+      changeOrigin: true,
+    },
+  },
+},
+// ...
 ```
 
-### Production (VPS)
-```bash
-# На VPS:
-pm2 start dist/index.js --name corpai-proxy
-# или
-pm2 restart corpai-proxy
+### 2. Production-среда (VPS)
 
-# Frontend: собрать и задеплоить (например на Nginx)
-npm run build
-# dist/ → публикуется на веб-сервер
+Полноценное боевое окружение, развернутое на удаленном сервере (VPS) по адресу **https://aihub.fvds.ru**.
+
+#### Общая схема работы в Production:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Браузер пользователя                      │
+│                (открывает https://aihub.fvds.ru)             │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ HTTPS (порт 443)
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│                   VPS-сервер (185.200.179.0)                 │
+│                                                             │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │                  Nginx (веб-сервер)                     │ │
+│ │  - Отдает статику React (index.html, js, css)           │ │
+│ │  - Проксирует /api/* на http://localhost:3001           │ │
+│ └──────────────────────────┬──────────────────────────────┘ │
+│                            │ HTTP (внутри сервера)
+│ ┌──────────────────────────▼──────────────────────────────┐ │
+│ │      Прокси-сервер (Node.js, pm2, localhost:3001)       │ │
+│ │         - Аутентификация, логика, роутинг               │ │
+│ └──────────────────────────┬──────────────────────────────┘ │
+│                            │ Service Role Key
+└────────────────────────────┼─────────────────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │  Supabase, OpenAI, etc.  │
+              └──────────────────────────┘
 ```
 
-### Переход с локального на VPS
-1. Frontend: изменить vite.config.ts (target: 'http://185.200.179.0:3001')
-2. Или использовать переменные окружения для динамической конфигурации
+#### Детали конфигурации сервера:
+
+- **Пользователь**: Все сервисы (прокси, файлы сайта) работают от имени непривилегированного пользователя `wstil` для повышения безопасности.
+
+- **Прокси-сервер (Node.js)**:
+    - Расположение: `/home/wstil/corpaiportal/proxy` (в домашней директории пользователя `wstil`).
+    - Запуск: Управляется через `pm2` от имени пользователя `wstil`.
+    - Команда запуска: `pm2 start dist/index.js --name corpai-proxy`.
+
+- **Веб-сервер (Nginx)**:
+    - Роль: Обратный прокси (Reverse Proxy).
+    - Файл конфигурации: `/etc/nginx/vhosts/wstil/aihub.fvds.ru.conf`.
+    - Ключевые директивы:
+        - `listen 443 ssl`: Принимает HTTPS-трафик.
+        - `root /var/www/wstil/data/www/aihub.fvds.ru`: Путь к статическим файлам фронтенда.
+        - `location /api/`: Блок, проксирующий API-запросы на Node.js-сервер.
+        - `location /`: Блок, обслуживающий React-приложение (Single Page Application).
+
+    ```nginx
+    # Содержимое файла /etc/nginx/vhosts/wstil/aihub.fvds.ru.conf
+    server {
+        listen 185.200.179.0:443 ssl;
+        server_name aihub.fvds.ru www.aihub.fvds.ru;
+
+        # --- Путь к файлам сайта ---
+        root /var/www/wstil/data/www/aihub.fvds.ru;
+        index index.html;
+
+        # --- Настройки SSL от Certbot ---
+        ssl_certificate /etc/letsencrypt/live/aihub.fvds.ru/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/aihub.fvds.ru/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers EECDH+AESGCM:EDH+AESGCM;
+        ssl_prefer_server_ciphers off;
+
+        # --- Проксирование API-запросов на наш Node.js сервер ---
+        location /api/ {
+            proxy_pass http://localhost:3001;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # --- Обработка всех остальных запросов для React-приложения ---
+        location / {
+            try_files $uri /index.html;
+        }
+    }
+    ```
+
+- **Брандмауэр (UFW)**:
+    - Установлен и настроен для разрешения необходимого трафика.
+    - Команды для настройки:
+        ```bash
+        # Установка
+        apt install ufw
+        # Разрешение SSH, HTTP, HTTPS
+        ufw allow ssh
+        ufw allow 'Nginx HTTP'
+        ufw allow 'Nginx HTTPS'
+        # Включение
+        ufw enable
+        ```
+
+- **SSL-сертификат (Let's Encrypt)**:
+    - Получен и автоматически обновляется с помощью `certbot`.
+    - Команда для получения: `certbot --nginx -d aihub.fvds.ru`.
 
 ---
 
 ## 7. Управление процессами на VPS (pm2)
+
+Команды выполняются от имени пользователя `wstil`.
 
 ```bash
 # Запустить
@@ -403,7 +506,6 @@ pm2 delete corpai-proxy
 
 # Просмотр логов
 pm2 logs corpai-proxy
-tail -f proxy.log
 
 # Автозагрузка при перезагрузке системы
 pm2 startup
@@ -414,108 +516,54 @@ pm2 save
 
 ## 8. Обновление кода на VPS
 
-```bash
-# На локальной машине
-git push origin main
+1.  **На локальной машине** отправляем изменения в репозиторий:
+    ```bash
+    git push origin main
+    ```
 
-# На VPS
-cd ~/corpaiportal
-git fetch origin
-git reset --hard origin/main
+2.  **На VPS** подключаемся по SSH и переключаемся на пользователя `wstil`:
+    ```bash
+    su - wstil
+    ```
 
-# Пересобрать прокси
-cd proxy
-npm install
-npm run build
+3.  **Обновляем код** из репозитория:
+    ```bash
+    cd ~/corpaiportal
+    git fetch origin
+    git reset --hard origin/main
+    ```
 
-# Перезапустить
-pm2 restart corpai-proxy
+4.  **Пересобираем и перезапускаем** нужные части:
+    ```bash
+    # Если изменился прокси-сервер
+    cd ~/corpaiportal/proxy
+    npm install
+    npm run build
+    pm2 restart corpai-proxy
 
-# Проверить логи
-tail -f proxy.log
-```
-
----
-
-## 9. Масштабируемость и оптимизация
-
-### Текущие ограничения
-- Прокси работает в одном процессе
-- Кэширование моделей OpenRouter (1 час)
-- TanStack Query кэширует данные на клиенте
-
-### Возможные улучшения
-- Load balancer перед несколькими прокси
-- Redis для кэширования
-- Message queues (RabbitMQ) для асинхронной обработки
-- CDN для статических файлов
-- Database replication для высокой доступности
+    # Если изменился фронтенд
+    cd ~/corpaiportal
+    npm run build
+    # После этого нужно скопировать содержимое папки dist в /var/www/wstil/data/www/aihub.fvds.ru
+    # Это проще делать от root через scp с локальной машины
+    ```
 
 ---
 
-## 10. Troubleshooting
+## 9. Troubleshooting на Production
 
-### Проблема: 403 Forbidden от Supabase
-**Решение:** Проверить SUPABASE_SERVICE_ROLE_KEY на прокси, убедиться что он секретный, а не публичный ANON_KEY
+### Проблема: Сайт не открывается (Connection Refused)
+**Решение:** Проверить статус брандмауэра `ufw status` (от `root`). Убедиться, что разрешены `Nginx HTTP` и `Nginx HTTPS`.
 
-### Проблема: Модели не загружаются в чат
-**Решение:** Проверить:
-1. Есть ли записи в таблице `models`
-2. Есть ли записи в `user_model_access` для текущего пользователя
-3. Работает ли прокси (`pm2 logs corpai-proxy`)
+### Проблема: Отображается "Welcome to nginx!"
+**Решение:** Конфликт конфигураций. Проверить `/etc/nginx/sites-enabled/` и `/etc/nginx/nginx.conf` на наличие дублирующих или `default_server` блоков (от `root`).
 
-### Проблема: Сообщения не сохраняются в БД
-**Решение:** Проверить:
-1. JWT токен валиден (срок не истёк)
-2. `SUPABASE_SERVICE_ROLE_KEY` на прокси верный
-3. Таблица `messages` существует и доступна
-4. Логи прокси на наличие ошибок
+### Проблема: API-запросы не работают (ошибка 404 или 502)
+**Решение:**
+1.  Проверить `pm2 logs corpai-proxy` (от `wstil`), чтобы убедиться, что прокси-сервер запущен и не содержит ошибок.
+2.  Проверить конфигурацию Nginx: правильный ли `proxy_pass` в `location /api/` (от `root`).
 
 ---
 
-## Итоговая архитектура в одной диаграмме
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Браузер пользователя                      │
-│  React 18 + Vite dev server (5173 или 192.168.8.38:5173)   │
-│  - Chat UI (Ant Design)                                     │
-│  - Auth Store (Zustand)                                     │
-│  - Chat Store (Zustand)                                     │
-│  - TanStack Query (для серверных данных)                   │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTPS + Bearer JWT
-                           │ /api/v1/chat, /api/v1/models
-                           ▼
-        ┌──────────────────────────────────────────┐
-        │  Удалённый Прокси (Node.js + Express)   │
-        │  IP: 185.200.179.0:3001                 │
-        │  - JWT верификация                      │
-        │  - Маршрутизация моделей                │
-        │  - Сохранение сообщений                 │
-        │  - Логирование использования            │
-        └──────────────┬───────────────────────────┘
-                       │ Service Role Key
-    ┌──────────────────┼──────────────────┐
-    │                  │                  │
-    ▼                  ▼                  ▼
- OpenAI API        Gemini API       OpenRouter API
- DeepSeek API      Grok API         (400+ моделей)
-    │                  │                  │
-    └──────────────────┼──────────────────┘
-                       │
-                       ▼
-        ┌──────────────────────────────┐
-        │  Supabase (PostgreSQL)       │
-        │  - Аутентификация            │
-        │  - Модели и конфигурация    │
-        │  - Истории чатов            │
-        │  - Usage logs               │
-        │  - Управление доступом      │
-        └──────────────────────────────┘
-```
-
----
-
-**Последнее обновление:** октябрь 2025  
-**Версия:** 1.0
+**Последнее обновление:** 29 октября 2025  
+**Версия:** 1.1

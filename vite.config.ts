@@ -11,10 +11,9 @@ export default defineConfig({
     },
   },
   server: {
-    host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: 'http://185.200.179.0:3001',
+        target: 'https://aihub.fvds.ru',
         changeOrigin: true,
       },
     },
