@@ -58,7 +58,8 @@ const EditableCell: React.FC<React.PropsWithChildren<EditableCellProps>> = ({
   );
 };
 
-const AdminPage: React.FC = () => {
+// Users Tab Component
+const UsersTab: React.FC = () => {
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const [editingKey, setEditingKey] = useState('');
@@ -318,43 +319,95 @@ const AdminPage: React.FC = () => {
   }, [baseColumns, modelColumns, isEditing]);
 
   return (
-    <div>
-      <Title level={2}>Управление пользователями</Title>
-      <Form form={form} component={false}>
-        <Table
-          components={{
-            body: {
-              cell: EditableCell,
-            },
-          }}
-          dataSource={users}
-          columns={mergedColumns}
-          rowKey="id"
-          loading={isLoadingUsers || isLoadingModels || isLoadingAllUserModels}
-          bordered={false}
-          scroll={{ x: 'auto' }}
-          rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
-          style={{
-            borderCollapse: 'collapse',
-          }}
-          pagination={{
-            pageSize: pageSize,
-            pageSizeOptions: ['10', '20', '50', '100'],
-            showSizeChanger: true,
-            showTotal: (total, range) => `${range[0]}-${range[1]} из ${total}`,
-          }}
-          onChange={(pagination, filters, sorter) => {
-            setEmailFilter(filters.email ? filters.email.map(String) : []);
-            setLimitFilter(filters.daily_request_limit ? filters.daily_request_limit.map(Number) : []);
-            if (pagination.pageSize) {
-              setPageSize(pagination.pageSize);
-            }
-          }}
-        />
-      </Form>
+    <Form form={form} component={false}>
+      <Table
+        components={{
+          body: {
+            cell: EditableCell,
+          },
+        }}
+        dataSource={users}
+        columns={mergedColumns}
+        rowKey="id"
+        loading={isLoadingUsers || isLoadingModels || isLoadingAllUserModels}
+        bordered={false}
+        scroll={{ x: 'auto' }}
+        rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
+        style={{
+          borderCollapse: 'collapse',
+        }}
+        pagination={{
+          pageSize: pageSize,
+          pageSizeOptions: ['10', '20', '50', '100'],
+          showSizeChanger: true,
+          showTotal: (total, range) => `${range[0]}-${range[1]} из ${total}`,
+        }}
+        onChange={(pagination, filters, sorter) => {
+          setEmailFilter(filters.email ? filters.email.map(String) : []);
+          setLimitFilter(filters.daily_request_limit ? filters.daily_request_limit.map(Number) : []);
+          if (pagination.pageSize) {
+            setPageSize(pagination.pageSize);
+          }
+        }}
+      />
+    </Form>
+  );
+};
 
-      {/* Model Routing Management Section */}
-      <ModelRoutingTable />
+// Models Tab Component
+const ModelsTab: React.FC = () => {
+  return <ModelRoutingTable />;
+};
+
+const AdminPage: React.FC = () => {
+  const [activeTab, setActiveTab] = useState('users');
+
+  return (
+    <div>
+      <div style={{
+        display: 'flex',
+        gap: '24px',
+        padding: '0 24px',
+        background: '#ffffff',
+        borderBottom: '1px solid #e5e5e5',
+        margin: 0,
+      }}>
+        <Button
+          type="text"
+          onClick={() => setActiveTab('users')}
+          style={{
+            padding: '12px 0',
+            fontSize: '14px',
+            fontWeight: activeTab === 'users' ? 600 : 400,
+            color: activeTab === 'users' ? '#1890ff' : '#999',
+            borderBottom: activeTab === 'users' ? '2px solid #1890ff' : 'none',
+            borderRadius: 0,
+            height: 'auto',
+          }}
+        >
+          Пользователи
+        </Button>
+        <Button
+          type="text"
+          onClick={() => setActiveTab('models')}
+          style={{
+            padding: '12px 0',
+            fontSize: '14px',
+            fontWeight: activeTab === 'models' ? 600 : 400,
+            color: activeTab === 'models' ? '#1890ff' : '#999',
+            borderBottom: activeTab === 'models' ? '2px solid #1890ff' : 'none',
+            borderRadius: 0,
+            height: 'auto',
+          }}
+        >
+          Модели
+        </Button>
+      </div>
+
+      <div style={{ padding: '16px 24px' }}>
+        {activeTab === 'users' && <UsersTab />}
+        {activeTab === 'models' && <ModelsTab />}
+      </div>
 
       <style>{`
         .ant-table-row-light {
@@ -373,7 +426,7 @@ const AdminPage: React.FC = () => {
           text-align: center;
           white-space: normal;
           word-break: break-word;
-          padding: 6px 4px !important;
+          padding: 8px 12px !important;
           font-size: 0.85em;
         }
         .ant-table-row-light .ant-table-cell-fix-left {
@@ -390,6 +443,10 @@ const AdminPage: React.FC = () => {
         }
         .ant-table-tbody > tr > td {
           font-size: 0.9em;
+        }
+        .ant-table-filter-trigger {
+          margin-left: 4px;
+          margin-right: -4px;
         }
       `}</style>
     </div>
