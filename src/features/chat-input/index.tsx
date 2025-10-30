@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Input, Button, Form } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
-import { ModelSelector } from '@/features/model-selector';
 import { useChatStore } from '@/entities/chat/model/chat-store';
 import { useThemeContext } from '@/app/providers/theme-provider';
 
@@ -12,7 +11,6 @@ interface ChatInputFormProps {
 
 export const ChatInputForm: React.FC<ChatInputFormProps> = ({ onSendMessage, loading }) => {
   const [form] = Form.useForm();
-  const { selectedModel, setSelectedModel, availableModels } = useChatStore();
   const { theme } = useThemeContext();
   const isDark = theme === 'dark';
 
@@ -49,9 +47,6 @@ export const ChatInputForm: React.FC<ChatInputFormProps> = ({ onSendMessage, loa
             color: isDark ? '#e8e8e8' : '#171717'
           }}
         />
-      </Form.Item>
-      <Form.Item style={{ marginBottom: 0, minWidth: 220 }}>
-        <ModelSelector value={selectedModel} onChange={setSelectedModel} availableModels={availableModels} />
       </Form.Item>
     </Form>
   );

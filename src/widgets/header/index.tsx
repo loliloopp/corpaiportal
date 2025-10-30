@@ -5,8 +5,9 @@ import { useAuthStore } from '@/features/auth';
 import { useThemeContext } from '@/app/providers/theme-provider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/shared/lib/supabase';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useChatStore } from '@/entities/chat/model/chat-store';
+import { ModelSelector } from '@/features/model-selector';
 import { getCurrentUserSimpleStats } from '@/entities/users/api/users-api';
 
 
@@ -113,6 +114,7 @@ export const Header = () => {
   const { theme } = useThemeContext();
   const isDark = theme === 'dark';
   const navigate = useNavigate();
+  const location = useLocation();
 
   const menuItems = [
     ...(profile?.role === 'admin'
@@ -153,7 +155,18 @@ export const Header = () => {
       borderBottom: 'none',
       height: 64
     }}>
-      <CurrentUserStats />
+      <Space size="large">
+        {location.pathname.startsWith('/chat') && (
+          <div style={{ minWidth: 220 }}>
+            <ModelSelector 
+              value={useChatStore().selectedModel} 
+              onChange={useChatStore().setSelectedModel} 
+              availableModels={useChatStore().availableModels} 
+            />
+          </div>
+        )}
+        <CurrentUserStats />
+      </Space>
       <Space size="large">
         <UsageStats />
         {user && (

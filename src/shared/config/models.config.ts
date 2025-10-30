@@ -39,10 +39,13 @@ export const GROK_MODELS: Model[] = [
 ];
 
 export const MODELS: Model[] = [
-    ...OPENAI_MODELS,
-    ...DEEPSEEK_MODELS,
-    ...GEMINI_MODELS,
-    ...GROK_MODELS,
+    { id: 'gpt-5', name: 'GPT-5', provider: 'openai' },
+    { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'openai' },
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'deepseek' },
+    { id: 'gemini-2.5-pro', name: 'Google Gemini 2.5 Pro', provider: 'gemini' },
+    { id: 'gemini-2.5-flash', name: 'Google Gemini 2.5 Flash', provider: 'gemini' },
+    { id: 'grok-4-fast', name: 'Grok 4 Fast', provider: 'grok' },
+    { id: 'claude-haiku', name: 'Claude Haiku', provider: 'openrouter' }, // assuming openrouter
 ];
 
 // Mapping of system model IDs to OpenRouter model IDs

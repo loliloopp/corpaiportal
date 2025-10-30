@@ -8,8 +8,17 @@ interface ModelSelectorProps {
   availableModels: Model[];
 }
 
+const modelRecommendations: Record<string, string> = {
+  'gpt-5': 'Для сложных задач и генерации высококачественного текста',
+  'gpt-5-mini': 'Быстрые ответы и общие консультации для всех пользователей',
+  'grok-4-fast': 'Для быстрого анализа технических задач и поиска в интернете',
+  'gemini-2.5-pro': 'Для финансового и управленческого анализа',
+  'gemini-2.5-flash': 'Для мониторинга процессов и оперативной поддержки задач',
+  'deepseek-chat': 'Для анализа больших данных и прогнозирования ресурсов',
+  'claude-haiku': 'Для глубокого юридического анализа и стратегического планирования',
+};
+
 export const ModelSelector: React.FC<ModelSelectorProps> = ({ value, onChange, availableModels }) => {
-  // Sort models by name alphabetically
   const sortedModels = useMemo(() => {
     return [...availableModels].sort((a, b) => a.name.localeCompare(b.name));
   }, [availableModels]);
@@ -21,11 +30,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ value, onChange, a
       style={{ width: '100%' }}
       showSearch
       filterOption={(input, option) =>
-        (option?.children as string)?.toLowerCase().includes(input.toLowerCase())
+        (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
       }
     >
       {sortedModels.map((model) => (
-        <Select.Option key={model.id} value={model.id}>
+        <Select.Option 
+          key={model.id} 
+          value={model.id}
+          title={modelRecommendations[model.id]}
+        >
           {model.name}
         </Select.Option>
       ))}

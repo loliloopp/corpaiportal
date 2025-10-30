@@ -36,13 +36,14 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
-  // Don't restore from localStorage - URL is the source of truth
-  
+  const initialActiveConversation = localStorage.getItem('activeConversation');
+  const initialSelectedModel = localStorage.getItem('selectedModel');
+
   return {
     conversations: [],
     messages: [],
-    activeConversation: null,
-    selectedModel: 'grok-4-fast',
+    activeConversation: initialActiveConversation ? JSON.parse(initialActiveConversation) : null,
+    selectedModel: initialSelectedModel || 'grok-4-fast',
     availableModels: [], // Initial state
     openRouterModels: [], // Initial state for OpenRouter models
     loading: false,
@@ -113,12 +114,14 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
     setActiveConversation: (conversationId: string | null) => {
       set({ activeConversation: conversationId, messages: [] });
+      localStorage.setItem('activeConversation', JSON.stringify(conversationId));
       if (conversationId) {
         get().fetchMessages(conversationId);
       }
     },
     setSelectedModel: (model: string) => {
       set({ selectedModel: model });
+      localStorage.setItem('selectedModel', model);
     },
     sendMessage: async (content: string) => {
       get().onSendMessageStart?.(); 
