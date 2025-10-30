@@ -1,10 +1,13 @@
 import React, { useState, useMemo } from 'react';
-import { Typography, Table, Select, InputNumber, Button, message, Form, Switch, Spin } from 'antd';
+import { Typography, Table, Select, InputNumber, Button, message, Form, Switch, Spin, Tabs, Row, Col, Statistic, Card } from 'antd';
 import { EditOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getAllUsers, updateUserProfile, UserProfile } from '@/entities/users/api/users-api';
 import { getModelsWithAccess, setModelPermission, ModelWithAccess } from '@/entities/models/api/models-api';
 import ModelRoutingTable from '@/widgets/model-routing-table';
+import { useThemeContext } from '@/app/providers/theme-provider';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { getGeneralStats, getModelUsageStats, getUserStats, getAllUsersForStats, getUserMessageHistory, getUserModelUsageStats } from '@/entities/statistics/api/statistics-api';
 
 const { Title } = Typography;
 const { Option } = Select;
@@ -320,93 +323,276 @@ const UsersTab: React.FC = () => {
 
   return (
     <Form form={form} component={false}>
-      <Table
-        components={{
-          body: {
-            cell: EditableCell,
-          },
-        }}
-        dataSource={users}
-        columns={mergedColumns}
-        rowKey="id"
-        loading={isLoadingUsers || isLoadingModels || isLoadingAllUserModels}
-        bordered={false}
-        scroll={{ x: 'auto' }}
-        rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
-        style={{
-          borderCollapse: 'collapse',
-        }}
-        pagination={{
-          pageSize: pageSize,
-          pageSizeOptions: ['10', '20', '50', '100'],
-          showSizeChanger: true,
-          showTotal: (total, range) => `${range[0]}-${range[1]} из ${total}`,
-        }}
-        onChange={(pagination, filters, sorter) => {
-          setEmailFilter(filters.email ? filters.email.map(String) : []);
-          setLimitFilter(filters.daily_request_limit ? filters.daily_request_limit.map(Number) : []);
-          if (pagination.pageSize) {
-            setPageSize(pagination.pageSize);
-          }
-        }}
-      />
+      <div style={{ padding: '0 0 24px 0' }}>
+        <Table
+          components={{
+            body: {
+              cell: EditableCell,
+            },
+          }}
+          dataSource={users}
+          columns={mergedColumns}
+          rowKey="id"
+          loading={isLoadingUsers || isLoadingModels || isLoadingAllUserModels}
+          bordered={false}
+          scroll={{ x: 'auto' }}
+          sticky
+          rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
+          style={{
+            borderCollapse: 'collapse',
+          }}
+          pagination={{
+            pageSize: pageSize,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            showSizeChanger: true,
+            showTotal: (total, range) => `${range[0]}-${range[1]} из ${total}`,
+          }}
+          onChange={(pagination, filters, sorter) => {
+            setEmailFilter(filters.email ? filters.email.map(String) : []);
+            setLimitFilter(filters.daily_request_limit ? filters.daily_request_limit.map(Number) : []);
+            if (pagination.pageSize) {
+              setPageSize(pagination.pageSize);
+            }
+          }}
+        />
+      </div>
     </Form>
   );
 };
 
 // Models Tab Component
 const ModelsTab: React.FC = () => {
-  return <ModelRoutingTable />;
+  return <div style={{ padding: '0 0 24px 0' }}><ModelRoutingTable /></div>;
 };
 
-const AdminPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('users');
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+
+// General Statistics Tab
+const GeneralStatsTab: React.FC = () => {
+  const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day');
+  const { data: stats, isLoading: isLoadingStats } = useQuery({
+    queryKey: ['generalStats', period],
+    queryFn: () => getGeneralStats(period),
+  });
+  const { data: modelStats, isLoading: isLoadingModelStats } = useQuery({
+    queryKey: ['modelUsageStats', period],
+    queryFn: () => getModelUsageStats(period),
+  });
+
+  const tableData = modelStats?.map(m => ({
+    key: m.model,
+    model: m.model,
+    requests: m.total_requests,
+    tokens: m.total_tokens,
+  })) || [];
+
+  const totalRequests = tableData.reduce((acc, cur) => acc + Number(cur.requests), 0);
+  const totalTokens = tableData.reduce((acc, cur) => acc + Number(cur.tokens), 0);
+
+  const columns = [
+    { title: 'Модель', dataIndex: 'model', key: 'model' },
+    { title: 'Запросы', dataIndex: 'requests', key: 'requests' },
+    { title: 'Токены', dataIndex: 'tokens', key: 'tokens' },
+  ];
+
+  return (
+    <Spin spinning={isLoadingStats || isLoadingModelStats}>
+      <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20 }}>
+        <Select.Option value="day">За день</Select.Option>
+        <Select.Option value="week">За неделю</Select.Option>
+        <Select.Option value="month">За месяц</Select.Option>
+      </Select>
+      <Table 
+        dataSource={tableData}
+        columns={columns}
+        pagination={false}
+        bordered
+        size="small"
+        summary={() => (
+          <Table.Summary.Row>
+            <Table.Summary.Cell index={0}><strong>Всего</strong></Table.Summary.Cell>
+            <Table.Summary.Cell index={1}><strong>{totalRequests}</strong></Table.Summary.Cell>
+            <Table.Summary.Cell index={2}><strong>{totalTokens}</strong></Table.Summary.Cell>
+          </Table.Summary.Row>
+        )}
+      />
+      <Title level={4} style={{ marginTop: 20 }}>Динамика использования</Title>
+      <ResponsiveContainer width="100%" height={300}>
+        <LineChart data={stats}>
+          <XAxis dataKey="date_trunc" />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Line type="linear" dataKey="total_requests" stroke="#8884d8" name="Запросы" />
+          <Line type="linear" dataKey="total_tokens" stroke="#82ca9d" name="Токены" />
+        </LineChart>
+      </ResponsiveContainer>
+      <Title level={4}>Использование по моделям</Title>
+      <ResponsiveContainer width="100%" height={300}>
+        <PieChart>
+          <Pie data={modelStats} dataKey="total_requests" nameKey="model" cx="50%" cy="50%" outerRadius={100} fill="#8884d8" label>
+            {modelStats?.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+          </Pie>
+          <Tooltip />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    </Spin>
+  );
+};
+
+// User Statistics Tab
+const StatsUserTab: React.FC = () => {
+  const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day');
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
+
+  const { data: users, isLoading: isLoadingUsers } = useQuery({
+    queryKey: ['allUsersForStats'],
+    queryFn: getAllUsersForStats,
+  });
+  const { data: stats, isLoading: isLoadingStats } = useQuery({
+    queryKey: ['userStats', selectedUser, period],
+    queryFn: () => selectedUser ? getUserStats(selectedUser, period) : [],
+    enabled: !!selectedUser,
+  });
+  const { data: modelStats, isLoading: isLoadingModelStats } = useQuery({
+    queryKey: ['userModelStats', selectedUser, period],
+    queryFn: () => selectedUser ? getUserModelUsageStats(selectedUser, period) : [],
+    enabled: !!selectedUser,
+  });
+  const { data: historyData, isLoading: isLoadingHistory } = useQuery({
+    queryKey: ['userMessageHistory', selectedUser, period, pagination.current, pagination.pageSize],
+    queryFn: () => selectedUser ? getUserMessageHistory(selectedUser, period, pagination.pageSize, pagination.current) : { data: [], total: 0 },
+    enabled: !!selectedUser,
+  });
+
+  const tableData = modelStats?.map((m: any) => ({
+    key: m.model,
+    model: m.model,
+    requests: m.total_requests,
+    tokens: m.total_tokens,
+  })) || [];
+
+  const totalRequests = tableData.reduce((acc, cur) => acc + Number(cur.requests), 0);
+  const totalTokens = tableData.reduce((acc, cur) => acc + Number(cur.tokens), 0);
+  
+  const columns = [
+    { title: 'Модель', dataIndex: 'model', key: 'model' },
+    { title: 'Запросы', dataIndex: 'requests', key: 'requests' },
+    { title: 'Токены', dataIndex: 'tokens', key: 'tokens' },
+  ];
+  
+  const historyColumns = [
+    { title: 'Дата', dataIndex: 'created_at', key: 'created_at' },
+    { title: 'Запрос', dataIndex: 'content', key: 'content' },
+    { title: 'Модель', dataIndex: 'model', key: 'model' },
+    { title: 'Токены', dataIndex: 'total_tokens', key: 'total_tokens' },
+  ];
+
+  const handleTableChange = (newPagination: any) => {
+    setPagination({
+      current: newPagination.current,
+      pageSize: newPagination.pageSize,
+    });
+  };
 
   return (
     <div>
-      <div style={{
-        display: 'flex',
-        gap: '24px',
-        padding: '0 24px',
-        background: '#ffffff',
-        borderBottom: '1px solid #e5e5e5',
-        margin: 0,
-      }}>
-        <Button
-          type="text"
-          onClick={() => setActiveTab('users')}
-          style={{
-            padding: '12px 0',
-            fontSize: '14px',
-            fontWeight: activeTab === 'users' ? 600 : 400,
-            color: activeTab === 'users' ? '#1890ff' : '#999',
-            borderBottom: activeTab === 'users' ? '2px solid #1890ff' : 'none',
-            borderRadius: 0,
-            height: 'auto',
-          }}
-        >
-          Пользователи
-        </Button>
-        <Button
-          type="text"
-          onClick={() => setActiveTab('models')}
-          style={{
-            padding: '12px 0',
-            fontSize: '14px',
-            fontWeight: activeTab === 'models' ? 600 : 400,
-            color: activeTab === 'models' ? '#1890ff' : '#999',
-            borderBottom: activeTab === 'models' ? '2px solid #1890ff' : 'none',
-            borderRadius: 0,
-            height: 'auto',
-          }}
-        >
-          Модели
-        </Button>
-      </div>
+      <Select
+        showSearch
+        placeholder="Выберите пользователя"
+        onChange={setSelectedUser}
+        loading={isLoadingUsers}
+        style={{ width: 300, marginBottom: 20 }}
+        filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+        options={users?.map(u => ({ value: u.id, label: `${u.display_name || 'N/A'} - ${u.email}` }))}
+      />
+      {selectedUser && (
+        <Spin spinning={isLoadingStats || isLoadingModelStats || isLoadingHistory}>
+          <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20, marginLeft: 10 }}>
+            <Select.Option value="day">За день</Select.Option>
+            <Select.Option value="week">За неделю</Select.Option>
+            <Select.Option value="month">За месяц</Select.Option>
+          </Select>
+          <Table 
+            dataSource={tableData}
+            columns={columns}
+            pagination={false}
+            bordered
+            size="small"
+            style={{ marginBottom: 20 }}
+            summary={() => (
+              <Table.Summary.Row>
+                <Table.Summary.Cell index={0}><strong>Всего</strong></Table.Summary.Cell>
+                <Table.Summary.Cell index={1}><strong>{totalRequests}</strong></Table.Summary.Cell>
+                <Table.Summary.Cell index={2}><strong>{totalTokens}</strong></Table.Summary.Cell>
+              </Table.Summary.Row>
+            )}
+          />
+          <Title level={4}>Динамика использования</Title>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={stats}>
+              <XAxis dataKey="date_trunc" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line type="linear" dataKey="total_requests" stroke="#8884d8" name="Запросы" />
+              <Line type="linear" dataKey="total_tokens" stroke="#82ca9d" name="Токены" />
+            </LineChart>
+          </ResponsiveContainer>
+          <Title level={4} style={{ marginTop: 20 }}>История запросов</Title>
+          <Table 
+            dataSource={historyData?.data || []}
+            columns={historyColumns}
+            rowKey="created_at"
+            pagination={{
+              ...pagination,
+              total: historyData?.total || 0,
+              pageSizeOptions: ['5', '10', '20', '50', '100'],
+              showSizeChanger: true,
+            }}
+            onChange={handleTableChange}
+          />
+        </Spin>
+      )}
+    </div>
+  );
+};
 
-      <div style={{ padding: '16px 24px' }}>
+const AdminPage: React.FC = () => {
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('adminActiveTab') || 'users';
+  });
+  const { theme } = useThemeContext();
+  const isDark = theme === 'dark';
+
+  const handleTabChange = (key: string) => {
+    setActiveTab(key);
+    localStorage.setItem('adminActiveTab', key);
+  };
+
+  const items = [
+    { key: 'users', label: 'Пользователи' },
+    { key: 'models', label: 'Модели' },
+    { key: 'general-stats', label: 'Общая статистика' },
+    { key: 'user-stats', label: 'Статистика по пользователям' },
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ 
+        background: isDark ? '#363535' : '#ffffff', 
+        padding: '24px 24px 0 24px',
+        flexShrink: 0 
+      }}>
+        <Tabs activeKey={activeTab} onChange={handleTabChange} items={items} />
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px' }}>
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'models' && <ModelsTab />}
+        {activeTab === 'general-stats' && <GeneralStatsTab />}
+        {activeTab === 'user-stats' && <StatsUserTab />}
       </div>
 
       <style>{`
@@ -416,18 +602,13 @@ const AdminPage: React.FC = () => {
         .ant-table-row-gray {
           background-color: #f5f5f5;
         }
+        .ant-table {
+          margin: 0 !important;
+        }
         .ant-table .ant-table-cell {
           border-right: none;
           border-bottom: 1px solid #e5e5e5;
           padding: 4px 8px !important;
-        }
-        .ant-table thead .ant-table-cell {
-          border-bottom: 1px solid #e5e5e5;
-          text-align: center;
-          white-space: normal;
-          word-break: break-word;
-          padding: 8px 12px !important;
-          font-size: 0.85em;
         }
         .ant-table-row-light .ant-table-cell-fix-left {
           background-color: #ffffff;

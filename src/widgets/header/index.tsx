@@ -122,14 +122,8 @@ export const Header = () => {
           {
             key: 'admin',
             icon: <SettingOutlined />,
-            label: 'Управление',
+            label: 'Администрирование',
             onClick: () => navigate('/admin'),
-          },
-          {
-            key: 'dashboard',
-            icon: <DashboardOutlined />,
-            label: 'Статистика',
-            onClick: () => navigate('/dashboard'),
           },
         ]
       : []),

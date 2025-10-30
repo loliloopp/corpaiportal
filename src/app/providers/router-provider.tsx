@@ -6,7 +6,6 @@ import { useAuthStore } from '@/features/auth';
 import { Spin } from 'antd';
 import { MainLayout } from '@/layout/main-layout';
 import ChatPage from '@/pages/chat';
-import DashboardPage from '@/pages/dashboard';
 import AdminPage from '@/pages/admin';
 import { AdminRoute } from './admin-route';
 
@@ -28,7 +27,6 @@ export const AppRouter = () => {
           <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/chat/:conversationId" element={<ChatPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
         </Route>
       </Route>
       <Route element={<AdminRoute />}>

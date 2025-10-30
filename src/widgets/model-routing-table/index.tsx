@@ -125,8 +125,7 @@ const ModelRoutingTable: React.FC = () => {
     ];
 
     return (
-        <div style={{ marginTop: 48 }}>
-            <Title level={2}>Управление моделями</Title>
+        <div style={{ padding: '0 0 24px 0' }}>
             <Spin spinning={isLoading}>
                 <Table
                     dataSource={sortedData}
@@ -134,6 +133,7 @@ const ModelRoutingTable: React.FC = () => {
                     rowKey="model_id"
                     bordered={false}
                     scroll={{ x: 'auto' }}
+                    sticky
                     rowClassName={(_, index) => index % 2 === 0 ? 'ant-table-row-light' : 'ant-table-row-gray'}
                     pagination={false}
                 />
