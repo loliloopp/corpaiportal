@@ -397,17 +397,26 @@ const GeneralStatsTab: React.FC = () => {
 
   return (
     <Spin spinning={isLoadingStats || isLoadingModelStats}>
-      <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20 }}>
-        <Select.Option value="day">За день</Select.Option>
-        <Select.Option value="week">За неделю</Select.Option>
-        <Select.Option value="month">За месяц</Select.Option>
-      </Select>
+      <div style={{
+        position: 'sticky',
+        top: 0,
+        background: '#ffffff',
+        zIndex: 9,
+        paddingBottom: 12,
+      }}>
+        <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 0 }}>
+          <Select.Option value="day">За день</Select.Option>
+          <Select.Option value="week">За неделю</Select.Option>
+          <Select.Option value="month">За месяц</Select.Option>
+        </Select>
+      </div>
       <Table 
         dataSource={tableData}
         columns={columns}
         pagination={false}
         bordered
         size="small"
+        style={{ marginBottom: 20 }}
         summary={() => (
           <Table.Summary.Row>
             <Table.Summary.Cell index={0}><strong>Всего</strong></Table.Summary.Cell>
@@ -442,15 +451,70 @@ const GeneralStatsTab: React.FC = () => {
 };
 
 // User Statistics Tab
-const StatsUserTab: React.FC = () => {
-  const [selectedUser, setSelectedUser] = useState<string | null>(null);
+const StatsUserTab: React.FC<{ activeTab?: string }> = ({ activeTab }) => {
+  const [selectedUser, setSelectedUserState] = useState<string | null>(() => {
+    return localStorage.getItem('statsSelectedUser') || null;
+  });
   const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day');
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
+  const [showZeroRequests, setShowZeroRequestsState] = useState<boolean>(() => {
+    const stored = localStorage.getItem('statsShowZeroRequests');
+    return stored !== null ? JSON.parse(stored) : true;
+  });
+
+  const setShowZeroRequests = (show: boolean) => {
+    setShowZeroRequestsState(show);
+    localStorage.setItem('statsShowZeroRequests', JSON.stringify(show));
+  };
+
+  const setSelectedUser = (userId: string | null) => {
+    setSelectedUserState(userId);
+    if (userId) {
+      localStorage.setItem('statsSelectedUser', userId);
+    } else {
+      localStorage.removeItem('statsSelectedUser');
+    }
+  };
+
+  const handleClearUser = () => {
+    setSelectedUser(null);
+    setPeriod('day');
+    setPagination({ current: 1, pageSize: 10 });
+    setShowZeroRequests(true);
+  };
 
   const { data: users, isLoading: isLoadingUsers } = useQuery({
     queryKey: ['allUsersForStats'],
     queryFn: getAllUsersForStats,
   });
+  
+  // Query for all users statistics
+  const { data: allUsersStats, isLoading: isLoadingAllUsersStats } = useQuery({
+    queryKey: ['allUsersStats', period],
+    queryFn: async () => {
+      if (!users) return [];
+      const stats = await Promise.all(
+        users.map(async (user) => {
+          const modelStats = await getUserModelUsageStats(user.id, period);
+          const totalRequests = modelStats?.reduce((sum, m) => sum + (m.total_requests || 0), 0) || 0;
+          const totalTokens = modelStats?.reduce((sum, m) => sum + (m.total_tokens || 0), 0) || 0;
+          const models = modelStats?.map(m => m.model).join(', ') || '';
+          return {
+            key: user.id,
+            userId: user.id,
+            email: user.email,
+            displayName: user.display_name || 'N/A',
+            models: models,
+            requests: totalRequests,
+            tokens: totalTokens,
+          };
+        })
+      );
+      return stats;
+    },
+    enabled: !!users && users.length > 0,
+  });
+
   const { data: stats, isLoading: isLoadingStats } = useQuery({
     queryKey: ['userStats', selectedUser, period],
     queryFn: () => selectedUser ? getUserStats(selectedUser, period) : [],
@@ -490,6 +554,22 @@ const StatsUserTab: React.FC = () => {
     { title: 'Токены', dataIndex: 'total_tokens', key: 'total_tokens' },
   ];
 
+  const allUsersColumns = [
+    { 
+      title: 'Пользователь', 
+      dataIndex: 'email', 
+      key: 'email',
+      render: (email: string, record: any) => (
+        <a onClick={() => setSelectedUser(record.userId)} style={{ cursor: 'pointer', color: '#1890ff' }}>
+          {record.displayName} ({email})
+        </a>
+      )
+    },
+    { title: 'Используемые модели', dataIndex: 'models', key: 'models' },
+    { title: 'Запросы', dataIndex: 'requests', key: 'requests' },
+    { title: 'Токены', dataIndex: 'tokens', key: 'tokens' },
+  ];
+
   const handleTableChange = (newPagination: any) => {
     setPagination({
       current: newPagination.current,
@@ -497,24 +577,68 @@ const StatsUserTab: React.FC = () => {
     });
   };
 
+  // Filter all users stats based on checkbox
+  const filteredAllUsersStats = allUsersStats?.filter(user => {
+    if (showZeroRequests) return true;
+    return user.requests > 0;
+  }) || [];
+
   return (
     <div>
-      <Select
-        showSearch
-        placeholder="Выберите пользователя"
-        onChange={setSelectedUser}
-        loading={isLoadingUsers}
-        style={{ width: 300, marginBottom: 20 }}
-        filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-        options={users?.map(u => ({ value: u.id, label: `${u.display_name || 'N/A'} - ${u.email}` }))}
-      />
-      {selectedUser && (
+      <div style={{
+        position: 'sticky',
+        top: 0,
+        background: '#ffffff',
+        zIndex: 9,
+        paddingBottom: 12,
+        display: 'flex',
+        gap: 10,
+        alignItems: 'center',
+      }}>
+        <Select
+          showSearch
+          placeholder="Выберите пользователя"
+          onChange={setSelectedUser}
+          loading={isLoadingUsers}
+          style={{ width: 300, marginBottom: 0 }}
+          filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+          options={users?.map(u => ({ value: u.id, label: `${u.display_name || 'N/A'} - ${u.email}` }))}
+          onClear={handleClearUser}
+          allowClear
+          value={selectedUser}
+        />
+        <Select defaultValue="day" onChange={setPeriod} style={{ width: 150, marginBottom: 0 }}>
+          <Select.Option value="day">За день</Select.Option>
+          <Select.Option value="week">За неделю</Select.Option>
+          <Select.Option value="month">За месяц</Select.Option>
+        </Select>
+        {!selectedUser && (
+          <Form.Item style={{ marginBottom: 0 }}>
+            <input 
+              type="checkbox" 
+              checked={showZeroRequests} 
+              onChange={(e) => setShowZeroRequests(e.target.checked)}
+              style={{ marginRight: 8, cursor: 'pointer' }}
+            />
+            <label style={{ cursor: 'pointer', marginBottom: 0 }}>0 запросов</label>
+          </Form.Item>
+        )}
+      </div>
+      
+      {!selectedUser ? (
+        <Spin spinning={isLoadingAllUsersStats}>
+          <div style={{ marginTop: 20 }}>
+            <Table
+              dataSource={filteredAllUsersStats}
+              columns={allUsersColumns}
+              pagination={false}
+              bordered
+              size="small"
+            />
+          </div>
+        </Spin>
+      ) : (
         <Spin spinning={isLoadingStats || isLoadingModelStats || isLoadingHistory}>
-          <Select defaultValue="day" onChange={setPeriod} style={{ marginBottom: 20, marginLeft: 10 }}>
-            <Select.Option value="day">За день</Select.Option>
-            <Select.Option value="week">За неделю</Select.Option>
-            <Select.Option value="month">За месяц</Select.Option>
-          </Select>
           <Table 
             dataSource={tableData}
             columns={columns}
@@ -592,7 +716,7 @@ const AdminPage: React.FC = () => {
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'models' && <ModelsTab />}
         {activeTab === 'general-stats' && <GeneralStatsTab />}
-        {activeTab === 'user-stats' && <StatsUserTab />}
+        {activeTab === 'user-stats' && <StatsUserTab activeTab={activeTab} />}
       </div>
 
       <style>{`
