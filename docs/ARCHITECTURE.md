@@ -421,9 +421,14 @@ server: {
 - **Пользователь**: Все сервисы (прокси, файлы сайта) работают от имени непривилегированного пользователя `wstil` для повышения безопасности.
 
 - **Прокси-сервер (Node.js)**:
-    - Расположение: `/home/wstil/corpaiportal/proxy` (в домашней директории пользователя `wstil`).
+    - Расположение: `/var/www/wstil/data/corpaiportal/proxy` (в директории пользователя `wstil`).
     - Запуск: Управляется через `pm2` от имени пользователя `wstil`.
     - Команда запуска: `pm2 start dist/index.js --name corpai-proxy`.
+
+- **Фронтенд (статические файлы)**:
+    - Исходный проект: `/var/www/wstil/data/corpaiportal/`
+    - Собранные файлы: `/var/www/wstil/data/corpaiportal/dist/`
+    - Развернутые файлы для веб-сервера: `/var/www/wstil/data/www/aihub.fvds.ru/`
 
 - **Веб-сервер (Nginx)**:
     - Роль: Обратный прокси (Reverse Proxy).
@@ -433,6 +438,7 @@ server: {
         - `root /var/www/wstil/data/www/aihub.fvds.ru`: Путь к статическим файлам фронтенда.
         - `location /api/`: Блок, проксирующий API-запросы на Node.js-сервер.
         - `location /`: Блок, обслуживающий React-приложение (Single Page Application).
+        - `client_max_body_size 10M;`: Разрешает загрузку файлов больше 10MB.
 
     ```nginx
     # Содержимое файла /etc/nginx/vhosts/wstil/aihub.fvds.ru.conf
