@@ -97,12 +97,7 @@ export const Sidebar = () => {
         <Menu 
           theme="light" 
           mode="inline" 
-          items={[{
-            key: 'history',
-            label: 'История',
-            icon: <MessageOutlined />,
-            children: historyItems,
-          }]}
+          items={historyItems}
         />
       </div>
     </Sider>

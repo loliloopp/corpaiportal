@@ -378,6 +378,8 @@ const GeneralStatsTab: React.FC = () => {
     queryKey: ['modelUsageStats', period],
     queryFn: () => getModelUsageStats(period),
   });
+  const { theme } = useThemeContext();
+  const isDark = theme === 'dark';
 
   const tableData = modelStats?.map(m => ({
     key: m.model,
@@ -400,7 +402,7 @@ const GeneralStatsTab: React.FC = () => {
       <div style={{
         position: 'sticky',
         top: 0,
-        background: '#ffffff',
+        background: isDark ? '#363535' : '#ffffff',
         zIndex: 9,
         paddingBottom: 12,
       }}>
@@ -451,7 +453,7 @@ const GeneralStatsTab: React.FC = () => {
 };
 
 // User Statistics Tab
-const StatsUserTab: React.FC<{ activeTab?: string }> = ({ activeTab }) => {
+const StatsUserTab: React.FC<{ activeTab?: string; isDark?: boolean }> = ({ activeTab, isDark }) => {
   const [selectedUser, setSelectedUserState] = useState<string | null>(() => {
     return localStorage.getItem('statsSelectedUser') || null;
   });
@@ -587,7 +589,7 @@ const StatsUserTab: React.FC<{ activeTab?: string }> = ({ activeTab }) => {
       <div style={{
         position: 'sticky',
         top: 0,
-        background: '#ffffff',
+        background: isDark ? '#363535' : '#ffffff',
         zIndex: 9,
         paddingBottom: 12,
         display: 'flex',
@@ -715,29 +717,29 @@ const AdminPage: React.FC = () => {
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'models' && <ModelsTab />}
         {activeTab === 'general-stats' && <GeneralStatsTab />}
-        {activeTab === 'user-stats' && <StatsUserTab activeTab={activeTab} />}
+        {activeTab === 'user-stats' && <StatsUserTab activeTab={activeTab} isDark={isDark} />}
       </div>
 
       <style>{`
         .ant-table-row-light {
-          background-color: #ffffff;
+          background-color: ${isDark ? '#2d2d2d' : '#ffffff'};
         }
         .ant-table-row-gray {
-          background-color: #f5f5f5;
+          background-color: ${isDark ? '#404040' : '#f5f5f5'};
         }
         .ant-table {
           margin: 0 !important;
         }
         .ant-table .ant-table-cell {
           border-right: none;
-          border-bottom: 1px solid #e5e5e5;
+          border-bottom: 1px solid ${isDark ? '#434343' : '#e5e5e5'};
           padding: 4px 8px !important;
         }
         .ant-table-row-light .ant-table-cell-fix-left {
-          background-color: #ffffff;
+          background-color: ${isDark ? '#2d2d2d' : '#ffffff'};
         }
         .ant-table-row-gray .ant-table-cell-fix-left {
-          background-color: #f5f5f5;
+          background-color: ${isDark ? '#404040' : '#f5f5f5'};
         }
         table {
           table-layout: fixed !important;
