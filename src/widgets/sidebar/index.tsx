@@ -19,6 +19,11 @@ export const Sidebar = () => {
   const navigate = useNavigate();
   const isDark = theme === 'dark';
 
+  const [openKeys, setOpenKeys] = React.useState<string[]>(() => {
+    const savedOpenKeys = localStorage.getItem('sidebarOpenKeys');
+    return savedOpenKeys ? JSON.parse(savedOpenKeys) : ['history'];
+  });
+
   useEffect(() => {
     if (user) {
       fetchConversations(user.id);
@@ -96,8 +101,18 @@ export const Sidebar = () => {
       <div className={styles.siderHistory}>
         <Menu 
           theme="light" 
-          mode="inline" 
-          items={historyItems}
+          mode="inline"
+          openKeys={openKeys}
+          onOpenChange={(keys) => {
+            setOpenKeys(keys);
+            localStorage.setItem('sidebarOpenKeys', JSON.stringify(keys));
+          }}
+          items={[{
+            key: 'history',
+            label: 'История',
+            icon: <MessageOutlined />,
+            children: historyItems,
+          }]}
         />
       </div>
     </Sider>
