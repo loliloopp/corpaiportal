@@ -480,7 +480,6 @@ const StatsUserTab: React.FC<{ activeTab?: string }> = ({ activeTab }) => {
     setSelectedUser(null);
     setPeriod('day');
     setPagination({ current: 1, pageSize: 10 });
-    setShowZeroRequests(true);
   };
 
   const { data: users, isLoading: isLoadingUsers } = useQuery({
