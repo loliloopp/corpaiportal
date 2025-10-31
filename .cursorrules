@@ -79,3 +79,22 @@ src/
 - **Error Handling**: All Supabase queries must include error handling
 
 ## File Structure
+```
+## Cost Calculation Mechanism
+- **Функции**: `fetchOpenRouterPricing()` (proxy/src/index.ts) - получает прайс-лист от OpenRouter API, кэширует на 1 час
+- **Расчет**: `calculateCost()` (proxy/src/index.ts) - вычисляет стоимость: (promptTokens × input_price) + (completionTokens × output_price)
+- **Хранение**: cost сохраняется в `usage_logs` при каждом запросе (оба эндпоинта: `/api/v1/chat` и `/api/v1/chat/stream`)
+- **Отображение**: RPC функции возвращают `total_cost` (get_model_usage_stats, get_user_model_usage_stats, get_user_message_history)
+- **Ограничение**: Расчет работает только для OpenRouter моделей, для прямых провайдеров возвращает null
+
+## System Prompts Mechanism
+- **Таблица**: `prompts` - хранит роли с системными промтами, параметрами и флагом `by_default`
+- **Компоненты**:
+  - `PromptSelector` (src/features/prompt-selector/index.tsx) - кнопки выбора ролей в чате
+  - `usePromptsStore` (src/entities/prompts/model/prompts-store.ts) - Zustand store с localStorage персистентностью
+  - `PromptsTab` (src/pages/admin/components/prompts-tab.tsx) - управление ролями на странице админа
+- **Логика отправки**:
+  - System message добавляется ПЕРВЫМ в массив сообщений (перед историей диалога)
+  - Параметры temperature и top_p передаются в requestBody
+  - При selectedPrompt === null промт и параметры не отправляются
+- **Conversation Title**: Использует последнее пользовательское сообщение (не system message)
