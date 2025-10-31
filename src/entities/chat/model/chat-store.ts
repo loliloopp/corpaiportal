@@ -10,6 +10,7 @@ import { logUsage } from '@/entities/limits';
 import { Model, MODELS } from '@/shared/config/models.config';
 import { getModelsWithAccess, ModelWithAccess, getUserAccessibleModels, AccessibleModel } from '@/entities/models/api/models-api';
 import { openRouterApi, OpenRouterModel } from '@/entities/models/api/openrouter-api';
+import { usePromptsStore } from '@/entities/prompts';
 
 type Conversation = {
     id: string;
@@ -209,6 +210,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       const { activeConversation, selectedModel, messages, lastResponse } = get();
       const { user } = useAuthStore.getState();
+      const { selectedPrompt } = usePromptsStore.getState();
 
       if (!user) return;
 
@@ -241,11 +243,22 @@ export const useChatStore = create<ChatState>((set, get) => {
       }));
 
       try {
-        // Convert messages to ChatMessage format
-        const conversationHistory: ChatMessage[] = [...messages, optimisticUserMessage].map(msg => ({
+        // Build conversation history with system message if prompt is selected
+        let conversationHistory: ChatMessage[] = [];
+        
+        // Add system prompt as first message if selected
+        if (selectedPrompt && selectedPrompt.system_prompt) {
+          conversationHistory.push({
+            role: 'system' as const,
+            content: selectedPrompt.system_prompt,
+          });
+        }
+        
+        // Add conversation history
+        conversationHistory.push(...[...messages, optimisticUserMessage].map(msg => ({
           role: msg.role,
           content: msg.content,
-        }));
+        })));
 
         // Generate hash for cache lookup
         const messagesHash = generateMessagesHash(conversationHistory);
@@ -272,6 +285,12 @@ export const useChatStore = create<ChatState>((set, get) => {
           // Use cached response
           aiResponseData = cachedResponse.response;
         } else {
+          // Prepare request parameters (only temperature and top_p, model and messages are passed separately)
+          const requestParams = {
+            temperature: selectedPrompt?.temperature,
+            top_p: selectedPrompt?.top_p,
+          };
+
           // Fetch from API with streaming
           aiResponseData = await new Promise((resolve, reject) => {
             let fullResponse: ChatResponse | null = null;
@@ -280,6 +299,7 @@ export const useChatStore = create<ChatState>((set, get) => {
               selectedModel,
               conversationHistory,
               activeConversation,
+              requestParams,
               // onChunk: update the assistant message content in real-time
               (chunk: string) => {
                 set((state) => {

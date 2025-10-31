@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict wNrjRYWh3WyHU8LabEn7j5KH6Jx1Casl2mXqplH0UmPYwCqcqkrHK5mcqcglh0w
+\restrict JkobQEfw9aa35avXqHg9vwHDKzHU8SBju8AcdzXl22u5eXx12hLnMjWCECDyeiM
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.6
@@ -1003,13 +1003,14 @@ BEGIN
         SELECT
             model,
             COALESCE(COUNT(*), 0) AS total_requests,
-            COALESCE(SUM(total_tokens), 0) AS total_tokens
+            COALESCE(SUM(total_tokens), 0) AS total_tokens,
+            COALESCE(SUM(cost), 0) AS total_cost
         FROM public.usage_logs
         WHERE status = 'success'
           AND created_at >= (
             CASE
               WHEN period = 'day' THEN date_trunc('day', now() at time zone 'utc')
-              WHEN period = 'week' THEN now() at time zone 'utc' - interval '6 days' -- Changed
+              WHEN period = 'week' THEN now() at time zone 'utc' - interval '6 days'
               WHEN period = 'month' THEN now() at time zone 'utc' - interval '29 days'
               ELSE date_trunc('day', now() at time zone 'utc')
             END
@@ -1060,7 +1061,8 @@ BEGIN
             ul.created_at,
             m.content,
             ul.model,
-            ul.total_tokens
+            ul.total_tokens,
+            ul.cost
         FROM public.usage_logs ul
         JOIN public.messages m ON ul.message_id = m.id
         WHERE ul.user_id = p_user_id
@@ -1098,14 +1100,15 @@ BEGIN
         SELECT
             model,
             COALESCE(COUNT(*), 0) AS total_requests,
-            COALESCE(SUM(total_tokens), 0) AS total_tokens
+            COALESCE(SUM(total_tokens), 0) AS total_tokens,
+            COALESCE(SUM(cost), 0) AS total_cost
         FROM public.usage_logs
         WHERE user_id = p_user_id
           AND status = 'success'
           AND created_at >= (
             CASE
               WHEN period = 'day' THEN date_trunc('day', now() at time zone 'utc')
-              WHEN period = 'week' THEN now() at time zone 'utc' - interval '6 days' -- Changed
+              WHEN period = 'week' THEN now() at time zone 'utc' - interval '6 days'
               WHEN period = 'month' THEN now() at time zone 'utc' - interval '29 days'
               ELSE date_trunc('day', now() at time zone 'utc')
             END
@@ -3776,6 +3779,25 @@ CREATE TABLE public.models (
 ALTER TABLE public.models OWNER TO postgres;
 
 --
+-- Name: prompts; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.prompts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    role_name text NOT NULL,
+    system_prompt text NOT NULL,
+    temperature numeric(3,2),
+    top_p numeric(3,2),
+    created_by uuid NOT NULL,
+    by_default boolean DEFAULT false,
+    created_at timestamp without time zone DEFAULT now(),
+    updated_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.prompts OWNER TO postgres;
+
+--
 -- Name: settings; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -3784,7 +3806,8 @@ CREATE TABLE public.settings (
     key text NOT NULL,
     value boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now(),
-    updated_at timestamp without time zone DEFAULT now()
+    updated_at timestamp without time zone DEFAULT now(),
+    enable_prompt_preprocessing boolean DEFAULT false
 );
 
 
@@ -4533,6 +4556,14 @@ COPY auth.audit_log_entries (instance_id, id, payload, created_at, ip_address) F
 00000000-0000-0000-0000-000000000000	53d53e70-ca80-4264-afa4-dae83eef14a2	{"action":"token_revoked","actor_id":"dde5c3c7-8368-4df9-b12b-160ff2cc02ab","actor_username":"odintsov.su10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 12:35:33.279008+00	
 00000000-0000-0000-0000-000000000000	bd3e14b3-55fc-4cde-9de7-3f916cca183f	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 12:52:25.612901+00	
 00000000-0000-0000-0000-000000000000	9109c300-4e69-4b8f-a4c2-b6809055a420	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 12:52:25.637234+00	
+00000000-0000-0000-0000-000000000000	a4809072-cedd-40e6-bb9c-b89e30ab0803	{"action":"token_refreshed","actor_id":"98b67609-9822-4cb9-b2ed-14e3034c8559","actor_username":"admin@test.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 13:27:49.203456+00	
+00000000-0000-0000-0000-000000000000	559fe715-0214-463d-a599-5268b7fb7010	{"action":"token_revoked","actor_id":"98b67609-9822-4cb9-b2ed-14e3034c8559","actor_username":"admin@test.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 13:27:49.225962+00	
+00000000-0000-0000-0000-000000000000	b5e3269e-e622-4747-a89b-141a4135a80d	{"action":"token_refreshed","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 14:01:12.615013+00	
+00000000-0000-0000-0000-000000000000	059d60ec-8a69-4daf-b0f3-883f219c89ba	{"action":"token_revoked","actor_id":"8537c87c-44d7-450e-b1b0-498ae7ddd3f6","actor_username":"eugsu10@gmail.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 14:01:12.628427+00	
+00000000-0000-0000-0000-000000000000	41d07e75-8c50-4201-92a3-ec5a1f26f42e	{"action":"user_signedup","actor_id":"0236a1d5-3f29-449e-9e60-bf908e5e7cf6","actor_username":"sadovnikov.d.y@su10.ru","actor_via_sso":false,"log_type":"team","traits":{"provider":"email"}}	2025-10-31 14:05:00.410789+00	
+00000000-0000-0000-0000-000000000000	9196da8b-703e-46e7-9405-db36edb0b9a9	{"action":"login","actor_id":"0236a1d5-3f29-449e-9e60-bf908e5e7cf6","actor_username":"sadovnikov.d.y@su10.ru","actor_via_sso":false,"log_type":"account","traits":{"provider":"email"}}	2025-10-31 14:05:00.428145+00	
+00000000-0000-0000-0000-000000000000	e640f3ab-1248-4e5d-b38f-0d118c7505f0	{"action":"token_refreshed","actor_id":"98b67609-9822-4cb9-b2ed-14e3034c8559","actor_username":"admin@test.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 14:31:24.596593+00	
+00000000-0000-0000-0000-000000000000	25368712-288f-4c76-b1fe-d2d4b65acd25	{"action":"token_revoked","actor_id":"98b67609-9822-4cb9-b2ed-14e3034c8559","actor_username":"admin@test.com","actor_via_sso":false,"log_type":"token"}	2025-10-31 14:31:24.607479+00	
 \.
 
 
@@ -4570,6 +4601,7 @@ d8c1330a-ae1a-407a-ad2c-897ab85102dd	d8c1330a-ae1a-407a-ad2c-897ab85102dd	{"sub"
 e96e699e-647d-4132-b8b5-e10db8e01021	e96e699e-647d-4132-b8b5-e10db8e01021	{"sub": "e96e699e-647d-4132-b8b5-e10db8e01021", "email": "kuzmin.a.a@su10.ru", "display_name": "Кузьмин ", "email_verified": false, "phone_verified": false}	email	2025-10-31 06:26:19.476134+00	2025-10-31 06:26:19.476184+00	2025-10-31 06:26:19.476184+00	b6c7d826-4a54-442b-a8a0-0e92b62a0c28
 f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4	f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4	{"sub": "f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4", "email": "popov.a.n@su10.ru", "display_name": "Попов", "email_verified": false, "phone_verified": false}	email	2025-10-31 06:42:32.070799+00	2025-10-31 06:42:32.070849+00	2025-10-31 06:42:32.070849+00	34047ac6-dd16-4ba3-a4b0-139d5b314c3e
 cde324d4-4ab5-448f-9544-45dbf515d12d	cde324d4-4ab5-448f-9544-45dbf515d12d	{"sub": "cde324d4-4ab5-448f-9544-45dbf515d12d", "email": "levimper@gmail.com", "display_name": "Некрасов", "email_verified": false, "phone_verified": false}	email	2025-10-31 12:25:53.3172+00	2025-10-31 12:25:53.317255+00	2025-10-31 12:25:53.317255+00	bc5c66e2-44c8-400a-a50d-430e51d7e668
+0236a1d5-3f29-449e-9e60-bf908e5e7cf6	0236a1d5-3f29-449e-9e60-bf908e5e7cf6	{"sub": "0236a1d5-3f29-449e-9e60-bf908e5e7cf6", "email": "sadovnikov.d.y@su10.ru", "display_name": "Садовников", "email_verified": false, "phone_verified": false}	email	2025-10-31 14:05:00.397384+00	2025-10-31 14:05:00.39745+00	2025-10-31 14:05:00.39745+00	9b0951d1-8e19-4beb-b858-153552c48044
 \.
 
 
@@ -4611,6 +4643,7 @@ d9f72ecc-2d4e-4518-9ea4-ed671364d8b2	2025-10-30 11:27:43.65293+00	2025-10-30 11:
 438332c1-ed94-47dc-8d42-68839d42859e	2025-10-31 06:42:32.089458+00	2025-10-31 06:42:32.089458+00	password	475e6fe1-b44d-49c4-97d1-a619c2b142f0
 384b5c18-cc6f-4a97-babf-806e6a5d642a	2025-10-31 12:24:28.857424+00	2025-10-31 12:24:28.857424+00	password	bdd5eecf-3154-490c-a38b-31c0c167b6a4
 155ebc6f-cb04-48c5-89c2-f9b5b2c497cb	2025-10-31 12:25:53.339677+00	2025-10-31 12:25:53.339677+00	password	6da6ef72-c092-49ec-85c6-df4d59a377b7
+bdee9b8f-cd43-475d-abf2-95561dc37ac4	2025-10-31 14:05:00.465858+00	2025-10-31 14:05:00.465858+00	password	87638751-eea8-4143-9961-0d1fb42f7ba9
 \.
 
 
@@ -4669,7 +4702,6 @@ COPY auth.one_time_tokens (id, user_id, token_type, token_hash, relates_to, crea
 COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, updated_at, parent, session_id) FROM stdin;
 00000000-0000-0000-0000-000000000000	119	yfm6ypbrgpyn	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	t	2025-10-30 06:45:47.718505+00	2025-10-30 07:59:07.939343+00	p24lxtq7tkv5	57176e84-389e-4197-be7e-75f151b9c10c
 00000000-0000-0000-0000-000000000000	97	nxj2kna5dj5t	310087c1-ef51-4c13-9f65-e581845313fe	t	2025-10-29 13:13:37.050547+00	2025-10-31 04:45:59.327994+00	\N	0b4183d0-0f7a-43cd-acc0-ef7c0a295bd4
-00000000-0000-0000-0000-000000000000	206	v66klmtyavx5	98b67609-9822-4cb9-b2ed-14e3034c8559	f	2025-10-31 12:24:28.85566+00	2025-10-31 12:24:28.85566+00	\N	384b5c18-cc6f-4a97-babf-806e6a5d642a
 00000000-0000-0000-0000-000000000000	207	porlynx5wwqh	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 12:25:51.671588+00	2025-10-31 12:25:51.671588+00	4lpbx4h2pgru	69029e69-0bef-4c23-af66-9498127b87f6
 00000000-0000-0000-0000-000000000000	208	c3653t73vzyd	cde324d4-4ab5-448f-9544-45dbf515d12d	f	2025-10-31 12:25:53.338494+00	2025-10-31 12:25:53.338494+00	\N	155ebc6f-cb04-48c5-89c2-f9b5b2c497cb
 00000000-0000-0000-0000-000000000000	122	ggnqnou5tcpj	f051acbc-190a-4ea5-bf1c-90bb1cd7a58c	t	2025-10-30 07:52:12.013556+00	2025-10-30 09:21:35.276553+00	shgb64kz4lck	fa4e2bc2-dccb-4a58-839c-f65effd2219f
@@ -4678,10 +4710,10 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	130	bci5mcn6bmen	dde5c3c7-8368-4df9-b12b-160ff2cc02ab	t	2025-10-30 10:33:14.823226+00	2025-10-31 12:35:33.279644+00	ap22i4swhcqb	2fe1af21-d8dc-427e-83d0-06f67c04ccfd
 00000000-0000-0000-0000-000000000000	107	srld6owlk7g3	9a28b6d7-e5e3-4141-92c8-ec9da0dd7b3d	f	2025-10-29 14:00:52.109359+00	2025-10-29 14:00:52.109359+00	\N	971ea59a-d5b2-41ed-9dca-01e68b381b5a
 00000000-0000-0000-0000-000000000000	126	sakl6ulpy67q	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	t	2025-10-30 09:15:29.082907+00	2025-10-30 10:43:13.330199+00	3obhfid74xiv	57176e84-389e-4197-be7e-75f151b9c10c
-00000000-0000-0000-0000-000000000000	210	thi2otbzhff7	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 12:52:25.653667+00	2025-10-31 12:52:25.653667+00	3u3c6bz7ekqk	2d361a97-d8fa-4cc6-8ead-c8308620532a
 00000000-0000-0000-0000-000000000000	101	nsz73ckewoay	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	t	2025-10-29 13:25:50.431144+00	2025-10-29 15:01:43.88341+00	\N	57176e84-389e-4197-be7e-75f151b9c10c
 00000000-0000-0000-0000-000000000000	134	ezuzlks25n4l	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	f	2025-10-30 11:49:17.195006+00	2025-10-30 11:49:17.195006+00	t37dofsnaelp	57176e84-389e-4197-be7e-75f151b9c10c
 00000000-0000-0000-0000-000000000000	165	wbdfrpeqhg3s	310087c1-ef51-4c13-9f65-e581845313fe	t	2025-10-31 04:45:59.350184+00	2025-10-31 05:44:01.466872+00	nxj2kna5dj5t	0b4183d0-0f7a-43cd-acc0-ef7c0a295bd4
+00000000-0000-0000-0000-000000000000	206	v66klmtyavx5	98b67609-9822-4cb9-b2ed-14e3034c8559	t	2025-10-31 12:24:28.85566+00	2025-10-31 13:27:49.229113+00	\N	384b5c18-cc6f-4a97-babf-806e6a5d642a
 00000000-0000-0000-0000-000000000000	112	hxqn7youwcfo	112fd71d-fef9-4b4b-ad91-74f2fe211947	f	2025-10-29 15:12:24.017793+00	2025-10-29 15:12:24.017793+00	2dxlnig5zilz	b283b30c-c569-47ad-a91e-4f4133a4b853
 00000000-0000-0000-0000-000000000000	110	bqhwvcxvjmzo	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	t	2025-10-29 15:01:43.902435+00	2025-10-29 16:00:14.991687+00	nsz73ckewoay	57176e84-389e-4197-be7e-75f151b9c10c
 00000000-0000-0000-0000-000000000000	168	t3s77ald44m2	adea9c9c-2d73-45b4-a801-e576e0b57f74	t	2025-10-31 05:11:20.364439+00	2025-10-31 06:10:28.604181+00	rkpp6bbwa2rn	3915daa8-141b-4cee-bfaa-d7bf9e2f4aff
@@ -4689,6 +4721,9 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	172	lxabbmyfo3t2	e96e699e-647d-4132-b8b5-e10db8e01021	f	2025-10-31 06:26:19.524153+00	2025-10-31 06:26:19.524153+00	\N	1f677c44-6538-483e-a65e-445298a2d2e0
 00000000-0000-0000-0000-000000000000	153	ygzwd26krv4b	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-30 17:51:46.588057+00	2025-10-31 06:36:15.037087+00	\N	2d361a97-d8fa-4cc6-8ead-c8308620532a
 00000000-0000-0000-0000-000000000000	138	kxgf5pwmbcb4	d8c1330a-ae1a-407a-ad2c-897ab85102dd	f	2025-10-30 12:36:05.225295+00	2025-10-30 12:36:05.225295+00	\N	25a4f1b9-e9be-4934-805d-e7f635cf868c
+00000000-0000-0000-0000-000000000000	210	thi2otbzhff7	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-31 12:52:25.653667+00	2025-10-31 14:01:12.631155+00	3u3c6bz7ekqk	2d361a97-d8fa-4cc6-8ead-c8308620532a
+00000000-0000-0000-0000-000000000000	212	4jznssdcn3rg	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 14:01:12.640796+00	2025-10-31 14:01:12.640796+00	thi2otbzhff7	2d361a97-d8fa-4cc6-8ead-c8308620532a
+00000000-0000-0000-0000-000000000000	214	ysma4737itrd	98b67609-9822-4cb9-b2ed-14e3034c8559	f	2025-10-31 14:31:24.618788+00	2025-10-31 14:31:24.618788+00	tfm53cy76ile	384b5c18-cc6f-4a97-babf-806e6a5d642a
 00000000-0000-0000-0000-000000000000	176	ndqsuh2kvyne	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-31 06:36:15.04754+00	2025-10-31 07:39:51.677182+00	ygzwd26krv4b	2d361a97-d8fa-4cc6-8ead-c8308620532a
 00000000-0000-0000-0000-000000000000	166	igdk6qyjsnj3	7d3d3502-7204-4aee-87da-1fdcbdbba8ad	t	2025-10-31 04:48:06.945468+00	2025-10-31 08:27:49.203253+00	3gpyueacv27t	6c05392b-35e3-42dd-b82b-d5c62cce39ad
 00000000-0000-0000-0000-000000000000	180	2dizo5zy5qw6	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-31 07:39:51.690186+00	2025-10-31 08:51:06.777711+00	ndqsuh2kvyne	2d361a97-d8fa-4cc6-8ead-c8308620532a
@@ -4708,11 +4743,13 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	102	3wx2zbbwwnof	e4da2eb1-4729-41ec-978a-07a5d01a9fff	f	2025-10-29 13:49:47.188277+00	2025-10-29 13:49:47.188277+00	\N	f90e53ca-955e-4095-a6eb-8c31655bcba6
 00000000-0000-0000-0000-000000000000	197	3u3c6bz7ekqk	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-31 11:48:38.071224+00	2025-10-31 12:52:25.63797+00	5temprhcphui	2d361a97-d8fa-4cc6-8ead-c8308620532a
 00000000-0000-0000-0000-000000000000	106	vzqejn4oakzp	c3065a1d-0422-4c95-af57-580eab0c970f	f	2025-10-29 13:54:54.213699+00	2025-10-29 13:54:54.213699+00	\N	9a121aef-15d9-4560-b8c9-5ae464d1e1dc
+00000000-0000-0000-0000-000000000000	213	7ytuavbsilbr	0236a1d5-3f29-449e-9e60-bf908e5e7cf6	f	2025-10-31 14:05:00.449975+00	2025-10-31 14:05:00.449975+00	\N	bdee9b8f-cd43-475d-abf2-95561dc37ac4
 00000000-0000-0000-0000-000000000000	149	end62vppx6vv	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-30 17:21:46.422697+00	2025-10-31 06:27:34.572967+00	\N	69029e69-0bef-4c23-af66-9498127b87f6
 00000000-0000-0000-0000-000000000000	100	2dxlnig5zilz	112fd71d-fef9-4b4b-ad91-74f2fe211947	t	2025-10-29 13:16:22.342546+00	2025-10-29 15:12:24.016343+00	\N	b283b30c-c569-47ad-a91e-4f4133a4b853
 00000000-0000-0000-0000-000000000000	123	3obhfid74xiv	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	t	2025-10-30 07:59:07.946706+00	2025-10-30 09:15:29.080842+00	yfm6ypbrgpyn	57176e84-389e-4197-be7e-75f151b9c10c
 00000000-0000-0000-0000-000000000000	113	twvmm7glgeh2	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	t	2025-10-29 16:00:15.007838+00	2025-10-29 17:00:41.772032+00	bqhwvcxvjmzo	57176e84-389e-4197-be7e-75f151b9c10c
 00000000-0000-0000-0000-000000000000	152	whdlh5ky7a3t	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-30 17:27:52.7547+00	2025-10-31 06:27:48.936361+00	\N	3aeb287a-a520-4899-accd-16bb78171127
+00000000-0000-0000-0000-000000000000	211	tfm53cy76ile	98b67609-9822-4cb9-b2ed-14e3034c8559	t	2025-10-31 13:27:49.25215+00	2025-10-31 14:31:24.609446+00	v66klmtyavx5	384b5c18-cc6f-4a97-babf-806e6a5d642a
 00000000-0000-0000-0000-000000000000	177	h3xdu7z3sfp3	f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4	f	2025-10-31 06:42:32.086833+00	2025-10-31 06:42:32.086833+00	\N	438332c1-ed94-47dc-8d42-68839d42859e
 00000000-0000-0000-0000-000000000000	127	6hfodnxi64cz	f051acbc-190a-4ea5-bf1c-90bb1cd7a58c	t	2025-10-30 09:21:35.289937+00	2025-10-31 07:17:45.431388+00	ggnqnou5tcpj	fa4e2bc2-dccb-4a58-839c-f65effd2219f
 00000000-0000-0000-0000-000000000000	179	csnwyasnzrnn	f051acbc-190a-4ea5-bf1c-90bb1cd7a58c	f	2025-10-31 07:17:45.438688+00	2025-10-31 07:17:45.438688+00	6hfodnxi64cz	fa4e2bc2-dccb-4a58-839c-f65effd2219f
@@ -4834,23 +4871,24 @@ d9c64205-70a2-4a23-9520-c264e5d341d6	3c0bc697-412f-42ef-8a9e-3c2a96286072	2025-1
 25a4f1b9-e9be-4934-805d-e7f635cf868c	d8c1330a-ae1a-407a-ad2c-897ab85102dd	2025-10-30 12:36:05.217331+00	2025-10-30 12:36:05.217331+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.222.152.198	\N	\N
 9a121aef-15d9-4560-b8c9-5ae464d1e1dc	c3065a1d-0422-4c95-af57-580eab0c970f	2025-10-29 13:54:54.211765+00	2025-10-29 13:54:54.211765+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36	185.222.152.198	\N	\N
 971ea59a-d5b2-41ed-9dca-01e68b381b5a	9a28b6d7-e5e3-4141-92c8-ec9da0dd7b3d	2025-10-29 14:00:52.107738+00	2025-10-29 14:00:52.107738+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.222.152.198	\N	\N
+2d361a97-d8fa-4cc6-8ead-c8308620532a	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-30 17:51:46.56676+00	2025-10-31 14:01:12.656761+00	\N	aal1	\N	2025-10-31 14:01:12.656116	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
 438332c1-ed94-47dc-8d42-68839d42859e	f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4	2025-10-31 06:42:32.0856+00	2025-10-31 06:42:32.0856+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0	185.222.152.198	\N	\N
 b283b30c-c569-47ad-a91e-4f4133a4b853	112fd71d-fef9-4b4b-ad91-74f2fe211947	2025-10-29 13:16:22.341868+00	2025-10-29 15:12:24.0218+00	\N	aal1	\N	2025-10-29 15:12:24.021723	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0	185.222.152.198	\N	\N
 0b4183d0-0f7a-43cd-acc0-ef7c0a295bd4	310087c1-ef51-4c13-9f65-e581845313fe	2025-10-29 13:13:37.043735+00	2025-10-31 09:06:00.14943+00	\N	aal1	\N	2025-10-31 09:06:00.149347	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36	185.222.152.198	\N	\N
 3f39b669-1dae-40d8-8571-36bfcd978dca	32265ce5-8681-4ae5-99b1-2b81210e9522	2025-10-30 06:09:46.308949+00	2025-10-30 06:09:46.308949+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36	185.222.152.198	\N	\N
 6c05392b-35e3-42dd-b82b-d5c62cce39ad	7d3d3502-7204-4aee-87da-1fdcbdbba8ad	2025-10-29 13:13:51.063459+00	2025-10-31 09:36:57.506632+00	\N	aal1	\N	2025-10-31 09:36:57.506549	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0	185.222.152.198	\N	\N
+bdee9b8f-cd43-475d-abf2-95561dc37ac4	0236a1d5-3f29-449e-9e60-bf908e5e7cf6	2025-10-31 14:05:00.433593+00	2025-10-31 14:05:00.433593+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
 1f677c44-6538-483e-a65e-445298a2d2e0	e96e699e-647d-4132-b8b5-e10db8e01021	2025-10-31 06:26:19.505251+00	2025-10-31 06:26:19.505251+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36	185.222.152.198	\N	\N
+384b5c18-cc6f-4a97-babf-806e6a5d642a	98b67609-9822-4cb9-b2ed-14e3034c8559	2025-10-31 12:24:28.853856+00	2025-10-31 14:31:24.634848+00	\N	aal1	\N	2025-10-31 14:31:24.63476	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
 d9f72ecc-2d4e-4518-9ea4-ed671364d8b2	756adb06-f2d7-4113-9739-779afbd69643	2025-10-30 11:27:43.603376+00	2025-10-30 11:27:43.603376+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36	185.222.152.198	\N	\N
 57176e84-389e-4197-be7e-75f151b9c10c	f8e5ca55-75fd-419d-a30c-42ffa125d9d9	2025-10-29 13:25:50.416611+00	2025-10-30 11:49:17.210404+00	\N	aal1	\N	2025-10-30 11:49:17.210327	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.222.152.198	\N	\N
 7531a4b0-2bbc-43a8-b7fe-7af57bff1e0c	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-30 17:25:38.484195+00	2025-10-30 17:25:38.484195+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
 fa4e2bc2-dccb-4a58-839c-f65effd2219f	f051acbc-190a-4ea5-bf1c-90bb1cd7a58c	2025-10-29 13:50:13.279372+00	2025-10-31 07:17:45.445223+00	\N	aal1	\N	2025-10-31 07:17:45.445144	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.222.152.198	\N	\N
 3915daa8-141b-4cee-bfaa-d7bf9e2f4aff	adea9c9c-2d73-45b4-a801-e576e0b57f74	2025-10-30 12:27:37.92701+00	2025-10-31 10:22:10.542482+00	\N	aal1	\N	2025-10-31 10:22:10.542395	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.222.152.198	\N	\N
 3aeb287a-a520-4899-accd-16bb78171127	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-30 17:27:52.753308+00	2025-10-31 07:46:40.231666+00	\N	aal1	\N	2025-10-31 07:46:40.231583	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0	88.210.21.137	\N	\N
-384b5c18-cc6f-4a97-babf-806e6a5d642a	98b67609-9822-4cb9-b2ed-14e3034c8559	2025-10-31 12:24:28.853856+00	2025-10-31 12:24:28.853856+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
 69029e69-0bef-4c23-af66-9498127b87f6	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-30 17:21:46.413937+00	2025-10-31 12:25:51.687633+00	\N	aal1	\N	2025-10-31 12:25:51.687555	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
 155ebc6f-cb04-48c5-89c2-f9b5b2c497cb	cde324d4-4ab5-448f-9544-45dbf515d12d	2025-10-31 12:25:53.337116+00	2025-10-31 12:25:53.337116+00	\N	aal1	\N	\N	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	185.222.152.198	\N	\N
 2fe1af21-d8dc-427e-83d0-06f67c04ccfd	dde5c3c7-8368-4df9-b12b-160ff2cc02ab	2025-10-30 09:12:43.850163+00	2025-10-31 12:35:33.300112+00	\N	aal1	\N	2025-10-31 12:35:33.300038	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36	185.222.152.198	\N	\N
-2d361a97-d8fa-4cc6-8ead-c8308620532a	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	2025-10-30 17:51:46.56676+00	2025-10-31 12:52:25.676504+00	\N	aal1	\N	2025-10-31 12:52:25.676416	Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36	88.210.21.137	\N	\N
 \.
 
 
@@ -4885,17 +4923,18 @@ COPY auth.users (instance_id, id, aud, role, email, encrypted_password, email_co
 00000000-0000-0000-0000-000000000000	112fd71d-fef9-4b4b-ad91-74f2fe211947	authenticated	authenticated	semina.a.v@su10.ru	$2a$10$LVwJjOX6Rut660OSMyEclu9GgFTLIKwLqChwWBgS1sCj1f7xeJ02y	2025-10-29 13:16:22.338185+00	\N		\N		\N			\N	2025-10-29 13:16:22.341777+00	{"provider": "email", "providers": ["email"]}	{"sub": "112fd71d-fef9-4b4b-ad91-74f2fe211947", "email": "semina.a.v@su10.ru", "display_name": "Сёмина", "email_verified": true, "phone_verified": false}	\N	2025-10-29 13:16:22.332632+00	2025-10-29 15:12:24.019071+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	32265ce5-8681-4ae5-99b1-2b81210e9522	authenticated	authenticated	muha.m.u@su10.ru	$2a$10$284fZ9z1hXIfcWZf.WU7JOsenOJGc4He8UanHq.9InYeNWtYKXgeq	2025-10-30 06:09:46.284455+00	\N		\N		\N			\N	2025-10-30 06:09:46.308313+00	{"provider": "email", "providers": ["email"]}	{"sub": "32265ce5-8681-4ae5-99b1-2b81210e9522", "email": "muha.m.u@su10.ru", "display_name": "Муха Мария", "email_verified": true, "phone_verified": false}	\N	2025-10-30 06:09:46.096179+00	2025-10-30 06:09:46.367291+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	990cf9a6-88ab-465c-a280-b51c0467aeb9	authenticated	authenticated	postoev.e.v@su10.ru	$2a$10$ptAZJGcQLTXHaHfkp7nnmeeVetV8Cu8jkUU0.Kmv2rd35zJGZYClC	2025-10-29 12:23:00.20756+00	\N		\N		\N			\N	2025-10-31 07:58:33.689817+00	{"provider": "email", "providers": ["email"]}	{"sub": "990cf9a6-88ab-465c-a280-b51c0467aeb9", "email": "postoev.e.v@su10.ru", "display_name": "Постоев", "email_verified": true, "phone_verified": false}	\N	2025-10-29 12:23:00.188505+00	2025-10-31 12:11:05.403572+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	authenticated	authenticated	eugsu10@gmail.com	$2a$10$ycLTAeppx6j9uZ6OSL3EOOil5iKV.HJJkMzBWoZqTvwNmW3B8Laoa	2025-10-23 13:36:30.71992+00	\N		\N		\N			\N	2025-10-30 17:51:46.566669+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-10-23 13:36:30.688124+00	2025-10-31 14:01:12.652583+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	3c0bc697-412f-42ef-8a9e-3c2a96286072	authenticated	authenticated	repnikov.i.a@su10.ru	$2a$10$JfFoCeRbdhDVAxoVoO8AK.rvLaYpn52xDsEQ2L9v0mNhm4pk6bKBe	2025-10-29 13:52:27.351681+00	\N		\N		\N			\N	2025-10-29 13:52:27.362361+00	{"provider": "email", "providers": ["email"]}	{"sub": "3c0bc697-412f-42ef-8a9e-3c2a96286072", "email": "repnikov.i.a@su10.ru", "display_name": "Игорь Репников ", "email_verified": true, "phone_verified": false}	\N	2025-10-29 13:52:27.305916+00	2025-10-29 13:52:27.383752+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	310087c1-ef51-4c13-9f65-e581845313fe	authenticated	authenticated	kazubov.a.a@su10.ru	$2a$10$25OoH7coxxgr7vijaRrEzewR7j2p8yOX2Zn.b9p2apy0WVe.Ma5Me	2025-10-29 13:13:37.029162+00	\N		\N		\N			\N	2025-10-29 13:13:37.043634+00	{"provider": "email", "providers": ["email"]}	{"sub": "310087c1-ef51-4c13-9f65-e581845313fe", "email": "kazubov.a.a@su10.ru", "display_name": "Казубов", "email_verified": true, "phone_verified": false}	\N	2025-10-29 13:13:36.975942+00	2025-10-31 09:06:00.147912+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	authenticated	authenticated	eugsu10@gmail.com	$2a$10$ycLTAeppx6j9uZ6OSL3EOOil5iKV.HJJkMzBWoZqTvwNmW3B8Laoa	2025-10-23 13:36:30.71992+00	\N		\N		\N			\N	2025-10-30 17:51:46.566669+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-10-23 13:36:30.688124+00	2025-10-31 12:52:25.666973+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	e96e699e-647d-4132-b8b5-e10db8e01021	authenticated	authenticated	kuzmin.a.a@su10.ru	$2a$10$jZ7yACnbedYrVjczums/4ujxcar372YD0xwqcmt.Bp0fGg6z/89v.	2025-10-31 06:26:19.493306+00	\N		\N		\N			\N	2025-10-31 06:26:19.505146+00	{"provider": "email", "providers": ["email"]}	{"sub": "e96e699e-647d-4132-b8b5-e10db8e01021", "email": "kuzmin.a.a@su10.ru", "display_name": "Кузьмин ", "email_verified": true, "phone_verified": false}	\N	2025-10-31 06:26:19.385913+00	2025-10-31 06:26:19.537003+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	adea9c9c-2d73-45b4-a801-e576e0b57f74	authenticated	authenticated	bondaruk.g.a@mstroy.pro	$2a$10$SBAISz.AFjvsO/4Io30OVOBR5.InAHdLuZOq6VXROss5WmlvD04BO	2025-10-30 12:27:37.915895+00	\N		\N		\N			\N	2025-10-30 12:27:37.926921+00	{"provider": "email", "providers": ["email"]}	{"sub": "adea9c9c-2d73-45b4-a801-e576e0b57f74", "email": "bondaruk.g.a@mstroy.pro", "display_name": "Бондарук Геннадий", "email_verified": true, "phone_verified": false}	\N	2025-10-30 12:27:37.830389+00	2025-10-31 10:22:10.539657+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	98b67609-9822-4cb9-b2ed-14e3034c8559	authenticated	authenticated	admin@test.com	$2a$10$kXCdwKhJcHFAGsh.cwGSCe6MYTSjz8GsK0RQeuOJgVg1LstkvDVSu	2025-10-30 15:28:32.692418+00	\N		\N		\N			\N	2025-10-31 12:24:28.853771+00	{"provider": "email", "providers": ["email"]}	{"sub": "98b67609-9822-4cb9-b2ed-14e3034c8559", "email": "admin@test.com", "display_name": "admin@test.com", "email_verified": true, "phone_verified": false}	\N	2025-10-30 15:28:32.60289+00	2025-10-31 12:24:28.856742+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	756adb06-f2d7-4113-9739-779afbd69643	authenticated	authenticated	karaseni.n.d@zakupka.pro	$2a$10$Wh.EdmOC4RNbWevW0JVoB.MDw4EUTx9ocoNW575JgqajGLMwfESUG	2025-10-30 11:27:43.588003+00	\N		\N		\N			\N	2025-10-30 11:27:43.603286+00	{"provider": "email", "providers": ["email"]}	{"sub": "756adb06-f2d7-4113-9739-779afbd69643", "email": "karaseni.n.d@zakupka.pro", "display_name": "Карасени Николай Демьянович", "email_verified": true, "phone_verified": false}	\N	2025-10-30 11:27:43.506778+00	2025-10-30 11:27:43.652332+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	d8c1330a-ae1a-407a-ad2c-897ab85102dd	authenticated	authenticated	999@mail.ru	$2a$10$aqtyh3j2wx3Y9qvJ38ek1eEQ1VqVAQnFtZ3O12f.ubefEFqqEs3RK	2025-10-30 12:36:05.206809+00	\N		\N		\N			\N	2025-10-30 12:36:05.216641+00	{"provider": "email", "providers": ["email"]}	{"sub": "d8c1330a-ae1a-407a-ad2c-897ab85102dd", "email": "999@mail.ru", "display_name": "Иванов", "email_verified": true, "phone_verified": false}	\N	2025-10-30 12:36:05.103634+00	2025-10-30 12:36:05.237766+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4	authenticated	authenticated	popov.a.n@su10.ru	$2a$10$XN.oVndYTXZVlQkkioJC.eGJkAJO9MOt2DM7iV9bfy6XXpYkhOlM.	2025-10-31 06:42:32.076772+00	\N		\N		\N			\N	2025-10-31 06:42:32.085503+00	{"provider": "email", "providers": ["email"]}	{"sub": "f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4", "email": "popov.a.n@su10.ru", "display_name": "Попов", "email_verified": true, "phone_verified": false}	\N	2025-10-31 06:42:32.054747+00	2025-10-31 06:42:32.089016+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	0236a1d5-3f29-449e-9e60-bf908e5e7cf6	authenticated	authenticated	sadovnikov.d.y@su10.ru	$2a$10$jSy86KWv49qqyl6Aklrvbe1bEQfacqolLrFzmymqyLdMb4Hf1xqeG	2025-10-31 14:05:00.416696+00	\N		\N		\N			\N	2025-10-31 14:05:00.433475+00	{"provider": "email", "providers": ["email"]}	{"sub": "0236a1d5-3f29-449e-9e60-bf908e5e7cf6", "email": "sadovnikov.d.y@su10.ru", "display_name": "Садовников", "email_verified": true, "phone_verified": false}	\N	2025-10-31 14:05:00.347319+00	2025-10-31 14:05:00.464737+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	cde324d4-4ab5-448f-9544-45dbf515d12d	authenticated	authenticated	levimper@gmail.com	$2a$10$8pWsdWwJHeU1onGNfahSf.HP61JxY/R2jRAcb1AIQr1LM5yc3TO7W	2025-10-31 12:25:53.323222+00	\N		\N		\N			\N	2025-10-31 12:25:53.337019+00	{"provider": "email", "providers": ["email"]}	{"sub": "cde324d4-4ab5-448f-9544-45dbf515d12d", "email": "levimper@gmail.com", "display_name": "Некрасов", "email_verified": true, "phone_verified": false}	\N	2025-10-31 12:25:53.261263+00	2025-10-31 12:25:53.339375+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	dde5c3c7-8368-4df9-b12b-160ff2cc02ab	authenticated	authenticated	odintsov.su10@gmail.com	$2a$10$Bn4AW0fIG/kOx.GQxTttwOVf7M0tSBjp22np8IINzUsXBeV6DE/mC	2025-10-30 09:12:43.816711+00	\N		\N		\N			\N	2025-10-30 09:12:43.848836+00	{"provider": "email", "providers": ["email"]}	{"sub": "dde5c3c7-8368-4df9-b12b-160ff2cc02ab", "email": "odintsov.su10@gmail.com", "display_name": "Одинцов Артем", "email_verified": true, "phone_verified": false}	\N	2025-10-30 09:12:43.682583+00	2025-10-31 12:35:33.297379+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	98b67609-9822-4cb9-b2ed-14e3034c8559	authenticated	authenticated	admin@test.com	$2a$10$kXCdwKhJcHFAGsh.cwGSCe6MYTSjz8GsK0RQeuOJgVg1LstkvDVSu	2025-10-30 15:28:32.692418+00	\N		\N		\N			\N	2025-10-31 12:24:28.853771+00	{"provider": "email", "providers": ["email"]}	{"sub": "98b67609-9822-4cb9-b2ed-14e3034c8559", "email": "admin@test.com", "display_name": "admin@test.com", "email_verified": true, "phone_verified": false}	\N	2025-10-30 15:28:32.60289+00	2025-10-31 14:31:24.627622+00	\N	\N			\N		0	\N		\N	f	\N	f
 \.
 
 
@@ -5074,11 +5113,27 @@ c6d7edb7-9be9-4781-8aba-f438c80d2000	gpt-5	GPT-5	openai	0.7	f	2025-10-27 06:56:4
 
 
 --
+-- Data for Name: prompts; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.prompts (id, role_name, system_prompt, temperature, top_p, created_by, by_default, created_at, updated_at) FROM stdin;
+09de6a83-1d0e-4f67-adf3-ca6ec21df36c	Инженер	Ты - опытный инженер-строитель с глубокими знаниями в области проектирования, технического надзора и управления строительными процессами. Твоя задача - предоставлять точные, технически обоснованные ответы, основанные на нормативных документах (СНиП, ГОСТ, СП), строительных стандартах и лучших практиках отрасли.\n\nОсновные области компетенции:\n- Анализ и интерпретация проектной и рабочей документации (чертежи, спецификации, технические решения)\n- Расчет конструкций, материалов и нагрузок\n- Контроль качества выполнения строительно-монтажных работ\n- Координация между проектировщиками, подрядчиками и субподрядчиками\n- Выявление технических проблем и предложение решений\n- Соблюдение требований безопасности и норм строительства\n\nСтиль ответа: Технический, структурированный, с конкретными ссылками на нормативы. Используй профессиональную терминологию. Предоставляй количественные данные и расчеты там, где это необходимо. Если вопрос требует детального анализа документации, уточни дополнительные детали перед ответом.	0.30	0.88	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 14:20:29.715293	2025-10-31 14:20:29.715293
+c7fb15f2-4fb4-4865-96cd-6f06fe45027a	Экономист	Ты - ведущий экономист строительной компании с экспертизой в области сметного дела, ценообразования и финансового планирования строительных проектов. Твоя задача - предоставлять точные расчеты и финансовый анализ.\n\nОсновные области компетенции:\n- Составление и проверка смет на строительные работы\n- Расчет стоимости материалов, работ и накладных расходов\n- Анализ отклонений фактических затрат от плановых\n- Оценка рентабельности проектов\n- Прогнозирование бюджета с учетом инфляции и изменения цен\n- Анализ предложений подрядчиков и поставщиков\n- Контроль за расходованием средств\n- Подготовка финансовых отчетов по проектам\n\nСтиль ответа: Точный, основанный на расчетах. Всегда указывай единицы измерения и валюту. Структурируй финансовую информацию в виде таблиц. При расчетах показывай методику и формулы. Учитывай актуальные рыночные цены и экономические условия.\n	0.30	0.86	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 14:23:18.425074	2025-10-31 14:23:18.425074
+1c16e4b2-bc6f-458b-ad9c-8256374a1a6d	Инженер по гарантии	Ты - ведущий инженер по гарантийному обслуживанию в строительной компании с опытом работы с дефектами, претензиями и гарантийными обязательствами. Твоя основная задача - анализировать гарантийные случаи, определять причины дефектов и координировать их устранение.\n\nОсновные области компетенции:\n- Прием и анализ гарантийных претензий от клиентов\n- Техническая экспертиза дефектов и определение причин их возникновения (брак материалов, нарушение технологии, неправильная эксплуатация)\n- Оценка соответствия претензий условиям гарантийных обязательств\n- Координация работ по устранению дефектов с подрядчиками и поставщиками\n- Ведение документации по гарантийным случаям\n- Взаимодействие с производителями материалов по вопросам рекламаций\n- Анализ статистики дефектов для выявления системных проблем\n\nСтиль ответа: Аналитический и объективный. Четко разграничивай гарантийные и негарантийные случаи. Предоставляй пошаговые инструкции по документированию и устранению дефектов. Указывай на необходимость фотофиксации и сбора доказательств.	0.40	0.88	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 14:20:58.770253	2025-10-31 14:20:58.770253
+22fda6db-ea87-4cbc-a9ac-fe576d05082e	Менеджер снабжения	Ты - ведущий менеджер по снабжению и закупкам в строительной компании с опытом управления поставками, взаимодействия с поставщиками и оптимизации логистики. Твоя задача - обеспечивать своевременную поставку качественных материалов по оптимальной цене.\n\nОсновные области компетенции:\n- Планирование потребностей в материалах и оборудовании для проектов\n- Поиск и оценка поставщиков (цена, качество, сроки, надежность)\n- Ведение переговоров о ценах и условиях поставки\n- Контроль сроков поставки и координация с графиком строительства\n- Управление запасами и предотвращение дефицита/переизбытка материалов\n- Обработка заявок от объектов и согласование спецификаций\n- Контроль качества поставляемых материалов\n- Работа с договорами поставки и рекламациями\n\nСтиль ответа: Практичный, ориентированный на результат. Предоставляй информацию о рыночных ценах, альтернативных поставщиках и сроках поставки. Учитывай логистические факторы. Предлагай варианты оптимизации закупок и снижения затрат.\n	0.50	0.90	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 14:22:49.114972	2025-10-31 14:22:49.114972
+2828c60a-701a-4f7c-ba31-4198d1406180	Юрист	Ты - юрист, специализирующийся на строительном праве, договорной работе и урегулировании споров в строительной сфере. Твоя задача - предоставлять юридически обоснованные рекомендации в соответствии с действующим законодательством.\n\nОсновные области компетенции:\n- Анализ и проверка строительных договоров (генподряд, субподряд, поставки)\n- Консультации по вопросам договорных обязательств и ответственности\n- Правовая оценка рисков в проектах\n- Подготовка претензий и ответов на претензии\n- Консультации по вопросам гарантийных обязательств\n- Разрешение споров и досудебное урегулирование конфликтов\n- Соблюдение требований градостроительного и земельного законодательства\n- Оформление разрешительной документации\n\nСтиль ответа: Формальный, юридически выверенный. Ссылайся на конкретные статьи законов и нормативные акты (ГК РФ, Градостроительный кодекс и т.д.). Четко разграничивай права и обязанности сторон. При необходимости предупреждай о юридических рисках. Избегай категоричных утверждений в спорных ситуациях.\n	0.30	0.88	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 14:25:45.81475	2025-10-31 14:25:45.81475
+f6690699-eaf5-4cc0-be19-6d9bf9bb78e3	Бизнес-аналитик	Ты - ведущий бизнес-аналитик в строительной компании, специализирующийся на анализе данных, оптимизации процессов и поддержке принятия управленческих решений. Твоя задача - превращать сложные данные в понятные инсайты и практические рекомендации.\n\nОсновные области компетенции:\n- Сбор и анализ бизнес-требований от различных отделов\n- Анализ эффективности строительных проектов (сроки, бюджет, ресурсы)\n- Выявление узких мест и возможностей для улучшения процессов\n- Подготовка аналитических отчетов и презентаций для руководства\n- Работа с KPI и метриками проектов\n- Прогнозирование затрат и рисков\n- Разработка рекомендаций по оптимизации операционной деятельности\n- Анализ рыночных трендов в строительной отрасли\n\nСтиль ответа: Структурированный, с акцентом на данные и метрики. Представляй информацию в виде четких выводов с количественными показателями. Используй визуализацию данных там, где это уместно (таблицы, списки). Предлагай практические рекомендации с обоснованием.\n	0.50	0.90	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	t	2025-10-31 14:24:33.766226	2025-10-31 14:24:33.766226
+b404d035-a781-4a02-a788-a66a17ca3ddd	Без роли	Ты - универсальный AI-ассистент для сотрудников строительной компании. Твоя задача - предоставлять полезную информацию и помогать решать разнообразные задачи, связанные со строительной отраслью.\n\nОсновные области компетенции:\n- Общие вопросы по строительству и строительным технологиям\n- Базовая информация о материалах, процессах и стандартах\n- Помощь в поиске информации и составлении документов\n- Разъяснение терминологии и понятий\n- Общее консультирование по рабочим вопросам\n\nСтиль ответа: Дружелюбный и понятный. Адаптируй уровень детализации к запросу пользователя. Если вопрос требует экспертизы в конкретной области (юридической, технической, финансовой), рекомендуй обратиться к профильному специалисту или выбрать соответствующую роль. Предоставляй сбалансированные ответы с разумной степенью детализации.	0.70	0.93	8537c87c-44d7-450e-b1b0-498ae7ddd3f6	f	2025-10-31 14:26:19.132985	2025-10-31 14:26:19.132985
+\.
+
+
+--
 -- Data for Name: settings; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.settings (id, key, value, created_at, updated_at) FROM stdin;
-e649d4e4-ccfd-4d80-ac5a-5db2a2ca6d69	show_cost_in_selector	t	2025-10-31 11:46:31.480565	2025-10-31 11:56:02.344
+COPY public.settings (id, key, value, created_at, updated_at, enable_prompt_preprocessing) FROM stdin;
+e649d4e4-ccfd-4d80-ac5a-5db2a2ca6d69	show_cost_in_selector	t	2025-10-31 11:46:31.480565	2025-10-31 11:56:02.344	f
+c8e311c6-972f-48f9-8b29-97f325c72b1b	enable_prompt_preprocessing	t	2025-10-31 14:31:19.41902	2025-10-31 14:32:44.625	f
 \.
 
 
@@ -5226,6 +5281,8 @@ cde324d4-4ab5-448f-9544-45dbf515d12d	44db19dd-0380-4648-b7da-8befb6031073	2025-1
 cde324d4-4ab5-448f-9544-45dbf515d12d	9a8995fc-5c17-4ef9-b716-dcc76869da75	2025-10-31 12:52:37.086732+00
 cde324d4-4ab5-448f-9544-45dbf515d12d	c6d7edb7-9be9-4781-8aba-f438c80d2000	2025-10-31 12:52:41.328503+00
 cde324d4-4ab5-448f-9544-45dbf515d12d	7adfa70e-0f5b-412f-99c3-2bc17db3b562	2025-10-31 12:52:42.546624+00
+0236a1d5-3f29-449e-9e60-bf908e5e7cf6	e4460b2c-1a82-4ee9-9ea9-5be42dbbfcee	2025-10-31 14:05:00.34403+00
+0236a1d5-3f29-449e-9e60-bf908e5e7cf6	2cb9ae31-6c99-4b5c-af42-efb210ecabce	2025-10-31 14:05:00.34403+00
 \.
 
 
@@ -5239,6 +5296,7 @@ f31006f1-ab3e-44e9-a0ae-27d0bfa53ac4	popov.a.n@su10.ru	50	2025-10-31 06:42:32.05
 98b67609-9822-4cb9-b2ed-14e3034c8559	admin@test.com	50	2025-10-30 15:28:32.601069+00	2025-10-31 09:13:18.747595+00	user	admin@test.com
 990cf9a6-88ab-465c-a280-b51c0467aeb9	postoev.e.v@su10.ru	50	2025-10-29 12:23:00.188155+00	2025-10-31 11:45:34.759731+00	user	Постоев
 cde324d4-4ab5-448f-9544-45dbf515d12d	levimper@gmail.com	100	2025-10-31 12:25:53.260936+00	2025-10-31 12:52:39.787672+00	user	Некрасов
+0236a1d5-3f29-449e-9e60-bf908e5e7cf6	sadovnikov.d.y@su10.ru	0	2025-10-31 14:05:00.34403+00	2025-10-31 14:05:00.34403+00	user	Садовников
 8537c87c-44d7-450e-b1b0-498ae7ddd3f6	eugsu10@gmail.com	100	2025-10-24 13:09:54.861618+00	2025-10-29 12:22:24.627051+00	admin	Постоев
 310087c1-ef51-4c13-9f65-e581845313fe	kazubov.a.a@su10.ru	50	2025-10-29 13:13:36.973443+00	2025-10-29 13:15:29.554404+00	user	Казубов
 7d3d3502-7204-4aee-87da-1fdcbdbba8ad	korneichik.k.a@su10.ru	50	2025-10-29 13:13:51.048592+00	2025-10-29 13:15:35.190525+00	user	Корнейчик
@@ -5469,7 +5527,7 @@ COPY vault.secrets (id, name, description, secret, key_id, nonce, created_at, up
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: supabase_auth_admin
 --
 
-SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 210, true);
+SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 214, true);
 
 
 --
@@ -5756,6 +5814,22 @@ ALTER TABLE ONLY public.models
 
 ALTER TABLE ONLY public.models
     ADD CONSTRAINT models_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: prompts prompts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.prompts
+    ADD CONSTRAINT prompts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: prompts prompts_role_name_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.prompts
+    ADD CONSTRAINT prompts_role_name_key UNIQUE (role_name);
 
 
 --
@@ -6254,6 +6328,13 @@ CREATE INDEX idx_model_routing_model_id ON public.model_routing_config USING btr
 
 
 --
+-- Name: idx_prompts_by_default; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_prompts_by_default ON public.prompts USING btree (by_default) WHERE (by_default = true);
+
+
+--
 -- Name: idx_user_model_access_model_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -6606,6 +6687,14 @@ ALTER TABLE ONLY public.messages
 
 ALTER TABLE ONLY public.messages
     ADD CONSTRAINT messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: prompts prompts_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.prompts
+    ADD CONSTRAINT prompts_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id) ON DELETE SET NULL;
 
 
 --
@@ -7888,6 +7977,15 @@ GRANT SELECT ON TABLE public.models TO authenticated;
 
 
 --
+-- Name: TABLE prompts; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.prompts TO service_role;
+GRANT SELECT ON TABLE public.prompts TO anon;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.prompts TO authenticated;
+
+
+--
 -- Name: TABLE settings; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -8324,5 +8422,5 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict wNrjRYWh3WyHU8LabEn7j5KH6Jx1Casl2mXqplH0UmPYwCqcqkrHK5mcqcglh0w
+\unrestrict JkobQEfw9aa35avXqHg9vwHDKzHU8SBju8AcdzXl22u5eXx12hLnMjWCECDyeiM
 

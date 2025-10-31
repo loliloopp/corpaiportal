@@ -98,6 +98,7 @@ export interface Database {
           id: string
           key: string
           value: boolean
+          enable_prompt_preprocessing: boolean
           created_at: string
           updated_at: string
         }
@@ -105,6 +106,7 @@ export interface Database {
           id?: string
           key: string
           value?: boolean
+          enable_prompt_preprocessing?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -112,6 +114,42 @@ export interface Database {
           id?: string
           key?: string
           value?: boolean
+          enable_prompt_preprocessing?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      prompts: {
+        Row: {
+          id: string
+          role_name: string
+          system_prompt: string
+          temperature: number | null
+          top_p: number | null
+          created_by: string
+          by_default: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          role_name: string
+          system_prompt: string
+          temperature?: number | null
+          top_p?: number | null
+          created_by: string
+          by_default?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          role_name?: string
+          system_prompt?: string
+          temperature?: number | null
+          top_p?: number | null
+          created_by?: string
+          by_default?: boolean
           created_at?: string
           updated_at?: string
         }

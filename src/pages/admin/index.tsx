@@ -4,6 +4,7 @@ import { useThemeContext } from '@/app/providers/theme-provider';
 import { UsersTab } from './components/users-tab';
 import { GeneralStatsTab } from './components/general-stats-tab';
 import { StatsUserTab } from './components/stats-user-tab';
+import { PromptsTab } from './components/prompts-tab';
 import ModelRoutingTable from '@/widgets/model-routing-table';
 
 const ModelsTab: React.FC = () => {
@@ -25,6 +26,7 @@ const AdminPage: React.FC = () => {
   const items = [
     { key: 'users', label: 'Пользователи' },
     { key: 'models', label: 'Модели' },
+    { key: 'prompts', label: 'Промты' },
     { key: 'general-stats', label: 'Общая статистика' },
     { key: 'user-stats', label: 'Статистика по пользователям' },
   ];
@@ -41,6 +43,7 @@ const AdminPage: React.FC = () => {
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px' }}>
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'models' && <ModelsTab />}
+        {activeTab === 'prompts' && <PromptsTab />}
         {activeTab === 'general-stats' && <GeneralStatsTab />}
         {activeTab === 'user-stats' && <StatsUserTab />}
       </div>

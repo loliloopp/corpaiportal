@@ -94,23 +94,50 @@ export const sendAIRequestStreaming = async (
     model: string,
     messages: ChatMessage[],
     conversationId: string | null,
-    onChunk: (chunk: string) => void,
-    onComplete: (response: ChatResponse) => void,
-    onError: (error: Error) => void
+    requestParams?: { temperature?: number | null; top_p?: number | null },
+    onChunk?: (chunk: string) => void,
+    onComplete?: (response: ChatResponse) => void,
+    onError?: (error: Error) => void
 ): Promise<void> => {
+    // Handle both old and new signatures for backward compatibility
+    let actualOnChunk = onChunk;
+    let actualOnComplete = onComplete;
+    let actualOnError = onError;
+    let actualRequestParams = requestParams;
+
+    // If called with old signature: (model, messages, conversationId, onChunk, onComplete, onError)
+    if (typeof requestParams === 'function') {
+        actualOnChunk = requestParams as any;
+        actualOnComplete = onChunk as any;
+        actualOnError = onComplete as any;
+        actualRequestParams = undefined;
+    }
+
+    if (!actualOnChunk || !actualOnComplete || !actualOnError) {
+        throw new Error('Missing required callbacks');
+    }
+
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError || !session) {
-        onError(new APIError('User not authenticated.', 401, 'AUTH_REQUIRED'));
+        actualOnError(new APIError('User not authenticated.', 401, 'AUTH_REQUIRED'));
         return;
     }
 
-    const requestBody: ChatRequest = {
+    const requestBody: any = {
         model,
         messages,
         jwt: session.access_token,
         conversationId,
     };
+
+    // Add optional parameters if provided and not null
+    if (actualRequestParams?.temperature !== null && actualRequestParams?.temperature !== undefined) {
+        requestBody.temperature = actualRequestParams.temperature;
+    }
+    if (actualRequestParams?.top_p !== null && actualRequestParams?.top_p !== undefined) {
+        requestBody.top_p = actualRequestParams.top_p;
+    }
 
     try {
         const response = await fetch('/api/v1/chat/stream', {
@@ -136,12 +163,12 @@ export const sendAIRequestStreaming = async (
             }
             
             const error = parseAPIError(response, errorData);
-            onError(error);
+            actualOnError(error);
             return;
         }
 
         if (!response.body) {
-            onError(new NetworkError('Response body is empty'));
+            actualOnError(new NetworkError('Response body is empty'));
             return;
         }
 
@@ -168,7 +195,7 @@ export const sendAIRequestStreaming = async (
                             
                             if (parsed.type === 'content') {
                                 fullContent += parsed.content;
-                                onChunk(parsed.content);
+                                actualOnChunk(parsed.content);
                             } else if (parsed.type === 'complete') {
                                 messageId = parsed.id;
                                 usage = parsed.usage || usage;
@@ -181,7 +208,7 @@ export const sendAIRequestStreaming = async (
             }
 
             // Call onComplete with the final response
-            onComplete({
+            actualOnComplete({
                 id: messageId,
                 choices: [
                     {
@@ -195,20 +222,20 @@ export const sendAIRequestStreaming = async (
             });
         } catch (error) {
             if (error instanceof Error) {
-                onError(new NetworkError(error.message, error));
+                actualOnError(new NetworkError(error.message, error));
             } else {
-                onError(new NetworkError('Streaming failed'));
+                actualOnError(new NetworkError('Streaming failed'));
             }
         } finally {
             reader.releaseLock();
         }
     } catch (error) {
         if (error instanceof APIError) {
-            onError(error);
+            actualOnError(error);
         } else if (error instanceof Error) {
-            onError(new NetworkError(error.message, error));
+            actualOnError(new NetworkError(error.message, error));
         } else {
-            onError(new NetworkError('Network request failed', error));
+            actualOnError(new NetworkError('Network request failed', error));
         }
     }
 };

@@ -29,6 +29,18 @@ let cachedModels: any = null;
 let cacheTimestamp: number = 0;
 const CACHE_DURATION = 3600000;
 
+// Pricing cache for OpenRouter models
+interface ModelPricing {
+  pricing: {
+    prompt: number;
+    completion: number;
+  };
+  [key: string]: any;
+}
+let pricingCache: Record<string, ModelPricing> = {};
+let pricingCacheTimestamp: number = 0;
+const PRICING_CACHE_DURATION = 3600000; // 1 hour
+
 
 // =================================================================
 // Helper Functions
@@ -49,6 +61,72 @@ async function loadModelRoutingConfig(supabase: SupabaseClient) {
         console.log('>>> Model routing configuration loaded.');
     } catch (error: any) {
         console.error('Failed to load model routing config:', error.message);
+    }
+}
+
+// Fetch and cache OpenRouter models pricing
+async function fetchOpenRouterPricing() {
+    const now = Date.now();
+    if (pricingCache && Object.keys(pricingCache).length > 0 && now - pricingCacheTimestamp < PRICING_CACHE_DURATION) {
+        return pricingCache;
+    }
+
+    try {
+        const response = await axios.get('https://openrouter.ai/api/v1/models', {
+            headers: {
+                'Authorization': `Bearer ${OPENROUTER_CONFIG.apiKey}`,
+            },
+        });
+
+        const models = response.data.data || [];
+        const newCache: Record<string, ModelPricing> = {};
+
+        models.forEach((model: any) => {
+            if (model.id && model.pricing) {
+                newCache[model.id] = {
+                    pricing: {
+                        prompt: parseFloat(model.pricing.prompt) || 0,
+                        completion: parseFloat(model.pricing.completion) || 0,
+                    },
+                };
+            }
+        });
+
+        pricingCache = newCache;
+        pricingCacheTimestamp = now;
+        console.log(`>>> Cached pricing for ${Object.keys(newCache).length} OpenRouter models.`);
+        return newCache;
+    } catch (error: any) {
+        console.error('Failed to fetch OpenRouter pricing:', error.message);
+        return pricingCache; // Return stale cache if available
+    }
+}
+
+// Calculate cost based on tokens and provider pricing
+async function calculateCost(
+    model: string,
+    promptTokens: number,
+    completionTokens: number,
+    useOpenRouter: boolean,
+    openRouterModelId?: string
+): Promise<number | null> {
+    try {
+        if (useOpenRouter && openRouterModelId) {
+            const pricing = await fetchOpenRouterPricing();
+            const modelPricing = pricing[openRouterModelId];
+            
+            if (modelPricing && modelPricing.pricing) {
+                const cost = (promptTokens * modelPricing.pricing.prompt) +
+                            (completionTokens * modelPricing.pricing.completion);
+                console.log(`[COST CALCULATED] Model: ${openRouterModelId}, Tokens: ${promptTokens}+${completionTokens}, Cost: $${cost.toFixed(6)}`);
+                return parseFloat(cost.toFixed(6)); // Round to 6 decimal places
+            }
+        }
+        // For direct providers, we don't have pricing data, so return null
+        return null;
+    } catch (error: any) {
+        console.error('Error calculating cost:', error.message);
+        return null;
     }
 }
 
@@ -291,7 +369,7 @@ async function main() {
             return res.status(400).json({ error: validation.error });
         }
 
-        const { model, messages, jwt, conversationId: convId } = req.body;
+        const { model, messages, jwt, conversationId: convId, temperature, top_p } = req.body;
         let conversationId = convId;
 
         if (!jwt) {
@@ -347,9 +425,14 @@ async function main() {
 
             // 2. Create conversation if it's a new one
             if (!conversationId) {
+                // Get the last user message for the title (skip system messages)
+                const userMessages = messages.filter((msg: any) => msg.role === 'user');
+                const lastUserMessage = userMessages[userMessages.length - 1]?.content || 'New Chat';
+                const title = lastUserMessage.substring(0, 50);
+                
                 const { data: newConversation, error: createError } = await supabase
                     .from('conversations')
-                    .insert({ user_id: user.id, title: messages[0]?.content.substring(0, 50) || 'New Chat' })
+                    .insert({ user_id: user.id, title })
                     .select()
                     .single();
 
@@ -395,6 +478,13 @@ async function main() {
                 provider = OPENROUTER_CONFIG.provider;
                 finalModelId = routeConfig?.openRouterModelId || model; // Fallback to original model ID
                 requestBody = { model: finalModelId, messages: cleanedMessages };
+                // Add optional parameters if provided
+                if (temperature !== null && temperature !== undefined) {
+                    requestBody.temperature = temperature;
+                }
+                if (top_p !== null && top_p !== undefined) {
+                    requestBody.top_p = top_p;
+                }
             } else {
                 const providerConfig = AI_PROVIDERS_CONFIG[model];
                 if (!providerConfig || !providerConfig.apiKey) {
@@ -415,9 +505,20 @@ async function main() {
                                 parts: [{ text: msg.content }],
                             })),
                     };
+                    // Gemini's temperature config
+                    if (temperature !== null && temperature !== undefined) {
+                        requestBody.generationConfig = { temperature };
+                    }
                 } else {
                     // OpenAI-compatible payload
                     requestBody = { model: finalModelId, messages: cleanedMessages };
+                    // Add optional parameters if provided (but skip top_k for OpenAI/Grok)
+                    if (temperature !== null && temperature !== undefined) {
+                        requestBody.temperature = temperature;
+                    }
+                    if (top_p !== null && top_p !== undefined) {
+                        requestBody.top_p = top_p;
+                    }
                 }
             }
             
@@ -462,6 +563,15 @@ async function main() {
             const outputTokens = aiResponse.data.usage?.completion_tokens || Math.ceil(assistantContent.split(' ').length / 0.75);
             const totalTokens = inputTokens + outputTokens;
 
+            // Calculate cost based on provider pricing
+            const cost = await calculateCost(
+                model,
+                inputTokens,
+                outputTokens,
+                routeConfig?.useOpenRouter ?? false,
+                routeConfig?.openRouterModelId
+            );
+
             // Store model_id (text) in usage_logs.model, not UUID
             const { error: usageError } = await supabase.from('usage_logs').insert({
                 user_id: user.id,
@@ -471,6 +581,7 @@ async function main() {
                 total_tokens: totalTokens,
                 status: 'success',
                 message_id: assistantMessageId, // Associate with assistant message, not user message
+                cost: cost, // Add calculated cost (USD)
             });
             if (usageError) {
                 console.error('Failed to log usage:', usageError);
@@ -509,7 +620,7 @@ async function main() {
             return res.status(400).json({ error: validation.error });
         }
 
-        const { model, messages, jwt, conversationId: convId } = req.body;
+        const { model, messages, jwt, conversationId: convId, temperature, top_p } = req.body;
         let conversationId = convId;
 
         if (!jwt) {
@@ -579,9 +690,14 @@ async function main() {
 
             // 2. Create conversation if it's a new one
             if (!conversationId) {
+                // Get the last user message for the title (skip system messages)
+                const userMessages = messages.filter((msg: any) => msg.role === 'user');
+                const lastUserMessage = userMessages[userMessages.length - 1]?.content || 'New Chat';
+                const title = lastUserMessage.substring(0, 50);
+                
                 const { data: newConversation, error: createError } = await supabase
                     .from('conversations')
-                    .insert({ user_id: user.id, title: messages[0]?.content.substring(0, 50) || 'New Chat' })
+                    .insert({ user_id: user.id, title })
                     .select()
                     .single();
 
@@ -622,6 +738,13 @@ async function main() {
                 provider = OPENROUTER_CONFIG.provider;
                 finalModelId = routeConfig?.openRouterModelId || model;
                 requestBody = { model: finalModelId, messages: cleanedMessages, stream: true };
+                // Add optional parameters if provided
+                if (temperature !== null && temperature !== undefined) {
+                    requestBody.temperature = temperature;
+                }
+                if (top_p !== null && top_p !== undefined) {
+                    requestBody.top_p = top_p;
+                }
             } else {
                 const providerConfig = AI_PROVIDERS_CONFIG[model];
                 if (!providerConfig || !providerConfig.apiKey) {
@@ -642,9 +765,20 @@ async function main() {
                                 parts: [{ text: msg.content }],
                             })),
                     };
+                    // Gemini's temperature config
+                    if (temperature !== null && temperature !== undefined) {
+                        requestBody.generationConfig = { temperature };
+                    }
                 } else {
                     // OpenAI-compatible payload with streaming
                     requestBody = { model: finalModelId, messages: cleanedMessages, stream: true };
+                    // Add optional parameters if provided (but skip top_k for OpenAI/Grok)
+                    if (temperature !== null && temperature !== undefined) {
+                        requestBody.temperature = temperature;
+                    }
+                    if (top_p !== null && top_p !== undefined) {
+                        requestBody.top_p = top_p;
+                    }
                 }
             }
             
@@ -727,6 +861,15 @@ async function main() {
                         }
                         const totalTokens = inputTokens + outputTokens;
 
+                        // Calculate cost based on provider pricing
+                        const cost = await calculateCost(
+                            model,
+                            inputTokens,
+                            outputTokens,
+                            routeConfig?.useOpenRouter ?? false,
+                            routeConfig?.openRouterModelId
+                        );
+
                         const { error: usageError } = await supabase.from('usage_logs').insert({
                             user_id: user.id,
                             model: model,
@@ -735,6 +878,7 @@ async function main() {
                             total_tokens: totalTokens,
                             status: 'success',
                             message_id: assistantMessageId,
+                            cost: cost, // Add calculated cost (USD)
                         });
 
                         if (usageError) {

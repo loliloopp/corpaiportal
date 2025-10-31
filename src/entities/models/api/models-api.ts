@@ -319,17 +319,25 @@ export const getSetting = async (key: string): Promise<boolean> => {
         
         if (response.status === 404) {
             // Setting doesn't exist, return false (this is normal for first access)
+            // Try to create it with default value
+            try {
+                await setSetting(key, false);
+            } catch (e) {
+                // Silently fail if we can't create it
+                console.debug(`Could not create setting ${key}:`, e);
+            }
             return false;
         }
         
         if (!response.ok) {
-            throw new Error(`Failed to fetch setting: ${response.statusText}`);
+            console.error(`Failed to fetch setting ${key}: ${response.statusText}`);
+            return false;
         }
         
         const data = await response.json();
         return data.value ?? false;
     } catch (error) {
-        // Silently return false on error - 404 is expected and normal
+        console.error('Error fetching setting:', error);
         return false;
     }
 };
