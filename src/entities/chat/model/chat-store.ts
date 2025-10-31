@@ -4,7 +4,7 @@ import { queryClient } from '@/app/providers';
 import { Message } from './types';
 import { getConversations, getMessages, createConversation, saveMessage } from '../api/chat-api';
 import { useAuthStore } from '@/features/auth';
-import { sendAIRequest, ChatMessage, ChatResponse } from '@/shared/api/proxy-api';
+import { sendAIRequest, ChatMessage, ChatResponse, sendAIRequestStreaming } from '@/shared/api/proxy-api';
 import { APIError } from '@/shared/lib/error-handler';
 import { logUsage } from '@/entities/limits';
 import { Model, MODELS } from '@/shared/config/models.config';
@@ -223,7 +223,22 @@ export const useChatStore = create<ChatState>((set, get) => {
         model: selectedModel,
         created_at: new Date().toISOString(),
       };
-      set((state) => ({ messages: [...state.messages, optimisticUserMessage] }));
+      
+      // Add optimistic assistant message for streaming
+      const optimisticAssistantId = nanoid();
+      const optimisticAssistantMessage: Message = {
+        id: optimisticAssistantId,
+        conversation_id: activeConversation || 'optimistic-conv-id',
+        user_id: user.id,
+        role: 'assistant' as const,
+        content: '',
+        model: selectedModel,
+        created_at: new Date().toISOString(),
+      };
+      
+      set((state) => ({ 
+        messages: [...state.messages, optimisticUserMessage, optimisticAssistantMessage]
+      }));
 
       try {
         // Convert messages to ChatMessage format
@@ -257,8 +272,44 @@ export const useChatStore = create<ChatState>((set, get) => {
           // Use cached response
           aiResponseData = cachedResponse.response;
         } else {
-          // Fetch from API
-          aiResponseData = await sendAIRequest(selectedModel, conversationHistory, activeConversation);
+          // Fetch from API with streaming
+          aiResponseData = await new Promise((resolve, reject) => {
+            let fullResponse: ChatResponse | null = null;
+            
+            sendAIRequestStreaming(
+              selectedModel,
+              conversationHistory,
+              activeConversation,
+              // onChunk: update the assistant message content in real-time
+              (chunk: string) => {
+                set((state) => {
+                  // Find the assistant message (last one added after optimistic user message)
+                  const lastMessage = state.messages[state.messages.length - 1];
+                  if (lastMessage && lastMessage.role === 'assistant') {
+                    return {
+                      messages: [
+                        ...state.messages.slice(0, -1),
+                        {
+                          ...lastMessage,
+                          content: lastMessage.content + chunk,
+                        },
+                      ],
+                    };
+                  }
+                  return state;
+                });
+              },
+              // onComplete: resolve with full response
+              (response: ChatResponse) => {
+                fullResponse = response;
+                resolve(response);
+              },
+              // onError: reject with error
+              (error: Error) => {
+                reject(error);
+              }
+            );
+          });
 
           // Save to cache
           const cacheEntry: CachedResponse = {
@@ -299,8 +350,12 @@ export const useChatStore = create<ChatState>((set, get) => {
       } catch (error) {
         console.error('Error in sendMessage:', error);
         
-        // On error, remove the optimistic message
-        set((state) => ({ messages: state.messages.filter(m => m.id !== optimisticUserMessage.id) }));
+        // On error, remove both optimistic messages
+        set((state) => ({ 
+          messages: state.messages.filter(m => 
+            m.id !== optimisticUserMessage.id && m.id !== optimisticAssistantId
+          ) 
+        }));
 
         // Handle error with proper typing
         let title = 'Ошибка запроса';

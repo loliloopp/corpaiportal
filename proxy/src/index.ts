@@ -501,6 +501,282 @@ async function main() {
         }
     });
 
+    // POST endpoint for streaming chat responses (Server-Sent Events)
+    app.post('/api/v1/chat/stream', async (req, res) => {
+        // Validate request body
+        const validation = validateChatRequest(req.body);
+        if (!validation.valid) {
+            return res.status(400).json({ error: validation.error });
+        }
+
+        const { model, messages, jwt, conversationId: convId } = req.body;
+        let conversationId = convId;
+
+        if (!jwt) {
+            return res.status(400).json({ error: 'Missing authentication token.' });
+        }
+
+        // Set SSE headers
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+
+        try {
+            // 1. Authenticate user
+            const { data: { user }, error: userError } = await supabase.auth.getUser(jwt);
+            if (userError || !user) {
+                console.error("Auth error:", userError);
+                res.write(`data: ${JSON.stringify({ type: 'error', error: 'Invalid JWT.' })}\n\n`);
+                res.end();
+                return;
+            }
+
+            // 1.5 Check user request limit
+            const { data: profile, error: profileError } = await supabase
+                .from('user_profiles')
+                .select('daily_request_limit')
+                .eq('id', user.id)
+                .single();
+
+            if (profileError || !profile) {
+                console.error("Profile error:", profileError);
+                res.write(`data: ${JSON.stringify({ type: 'error', error: 'Could not fetch user profile.' })}\n\n`);
+                res.end();
+                return;
+            }
+
+            const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+            const todayStart = `${today}T00:00:00.000Z`;
+
+            // Check daily request limit
+            const { count, error: countError } = await supabase
+                .from('usage_logs')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', user.id)
+                .eq('status', 'success')
+                .gte('created_at', todayStart);
+
+            if (countError) {
+                console.error("Usage count error:", countError);
+                res.write(`data: ${JSON.stringify({ type: 'error', error: 'Could not count user usage.' })}\n\n`);
+                res.end();
+                return;
+            }
+
+            const requestLimit = profile.daily_request_limit || 0;
+            if (count !== null && count >= requestLimit) {
+                res.write(`data: ${JSON.stringify({ 
+                    type: 'error', 
+                    error: 'Вы достигли дневного лимита запросов.',
+                    code: 'DAILY_LIMIT_EXCEEDED',
+                    limit: requestLimit,
+                    used: count
+                })}\n\n`);
+                res.end();
+                return;
+            }
+
+            // 2. Create conversation if it's a new one
+            if (!conversationId) {
+                const { data: newConversation, error: createError } = await supabase
+                    .from('conversations')
+                    .insert({ user_id: user.id, title: messages[0]?.content.substring(0, 50) || 'New Chat' })
+                    .select()
+                    .single();
+
+                if (createError) throw createError;
+                conversationId = newConversation.id;
+            }
+
+            // 3. Save user message
+            const userMessage = messages[messages.length - 1];
+            const { data: savedUserMessage, error: saveMessageError } = await supabase.from('messages').insert({
+                conversation_id: conversationId,
+                user_id: user.id,
+                role: 'user',
+                content: userMessage.content,
+            }).select().single();
+            
+            if (saveMessageError) throw saveMessageError;
+
+            // 4. Determine routing and prepare API call
+            const routeConfig = modelRoutingConfig[model];
+            const useOpenRouter = routeConfig?.useOpenRouter ?? false;
+
+            // Clean messages - remove id, model, and other fields that providers don't expect
+            const cleanedMessages = messages.map((msg: any) => ({
+                role: msg.role,
+                content: msg.content,
+            }));
+
+            let targetUrl: string;
+            let apiKey: string | undefined;
+            let provider: string;
+            let finalModelId: string;
+            let requestBody: any;
+
+            if (useOpenRouter && OPENROUTER_CONFIG.apiKey) {
+                targetUrl = OPENROUTER_CONFIG.url;
+                apiKey = OPENROUTER_CONFIG.apiKey;
+                provider = OPENROUTER_CONFIG.provider;
+                finalModelId = routeConfig?.openRouterModelId || model;
+                requestBody = { model: finalModelId, messages: cleanedMessages, stream: true };
+            } else {
+                const providerConfig = AI_PROVIDERS_CONFIG[model];
+                if (!providerConfig || !providerConfig.apiKey) {
+                    throw new Error(`Configuration for model ${model} is missing or incomplete.`);
+                }
+                targetUrl = providerConfig.url;
+                apiKey = providerConfig.apiKey;
+                provider = providerConfig.provider;
+                finalModelId = model;
+                
+                if (provider === 'gemini') {
+                    // Gemini doesn't support streaming in the same way, so we'll use non-streaming
+                    requestBody = {
+                        contents: cleanedMessages
+                            .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
+                            .map((msg: any) => ({
+                                role: msg.role === 'assistant' ? 'model' : 'user',
+                                parts: [{ text: msg.content }],
+                            })),
+                    };
+                } else {
+                    // OpenAI-compatible payload with streaming
+                    requestBody = { model: finalModelId, messages: cleanedMessages, stream: true };
+                }
+            }
+            
+            if (!apiKey) {
+                throw new Error(`API key for provider ${provider} is not configured.`);
+            }
+
+            // 5. Make the request to the AI provider with streaming
+            const aiResponse = await axios.post(targetUrl, requestBody, {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                responseType: 'stream',
+            });
+
+            let fullContent = '';
+            let inputTokens = 0;
+            let outputTokens = 0;
+            let assistantMessageId = '';
+
+            // Handle streaming response
+            aiResponse.data.on('data', async (chunk: Buffer) => {
+                const lines = chunk.toString().split('\n').filter((line: string) => line.trim());
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        
+                        if (data === '[DONE]') {
+                            continue;
+                        }
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            
+                            if (parsed.choices && parsed.choices[0]) {
+                                const delta = parsed.choices[0].delta || {};
+                                if (delta.content) {
+                                    fullContent += delta.content;
+                                    // Send content chunk to client
+                                    res.write(`data: ${JSON.stringify({ type: 'content', content: delta.content })}\n\n`);
+                                }
+                            }
+
+                            // Handle usage info
+                            if (parsed.usage) {
+                                inputTokens = parsed.usage.prompt_tokens || inputTokens;
+                                outputTokens = parsed.usage.completion_tokens || outputTokens;
+                            }
+                        } catch (e) {
+                            // Skip unparseable lines
+                        }
+                    }
+                }
+            });
+
+            // Handle stream end
+            await new Promise<void>((resolve, reject) => {
+                aiResponse.data.on('end', async () => {
+                    try {
+                        // Save assistant message
+                        const { data: savedAssistantMessage, error: saveAssistantError } = await supabase.from('messages').insert({
+                            conversation_id: conversationId,
+                            user_id: user.id,
+                            role: 'assistant',
+                            content: fullContent,
+                            model: model,
+                        }).select().single();
+
+                        if (saveAssistantError) throw saveAssistantError;
+                        assistantMessageId = savedAssistantMessage?.id || '';
+
+                        // Log usage
+                        if (!inputTokens) {
+                            inputTokens = Math.ceil(cleanedMessages.map((m: any) => m.content).join(' ').split(' ').length / 0.75);
+                        }
+                        if (!outputTokens) {
+                            outputTokens = Math.ceil(fullContent.split(' ').length / 0.75);
+                        }
+                        const totalTokens = inputTokens + outputTokens;
+
+                        const { error: usageError } = await supabase.from('usage_logs').insert({
+                            user_id: user.id,
+                            model: model,
+                            prompt_tokens: inputTokens,
+                            completion_tokens: outputTokens,
+                            total_tokens: totalTokens,
+                            status: 'success',
+                            message_id: assistantMessageId,
+                        });
+
+                        if (usageError) {
+                            console.error('Failed to log usage:', usageError);
+                        }
+
+                        // Send completion event
+                        res.write(`data: ${JSON.stringify({ 
+                            type: 'complete', 
+                            id: conversationId,
+                            message_id: assistantMessageId,
+                            usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: totalTokens }
+                        })}\n\n`);
+                        res.end();
+                        resolve();
+                    } catch (error) {
+                        console.error('Error handling stream end:', error);
+                        res.write(`data: ${JSON.stringify({ type: 'error', error: 'Failed to process response' })}\n\n`);
+                        res.end();
+                        reject(error);
+                    }
+                });
+
+                aiResponse.data.on('error', (error: any) => {
+                    console.error('Stream error:', error);
+                    res.write(`data: ${JSON.stringify({ type: 'error', error: 'Streaming error occurred' })}\n\n`);
+                    res.end();
+                    reject(error);
+                });
+            });
+
+        } catch (error: any) {
+            console.error("Stream endpoint error:", error);
+            res.write(`data: ${JSON.stringify({ 
+                type: 'error', 
+                error: 'Internal server error',
+                details: error.message
+            })}\n\n`);
+            res.end();
+        }
+    });
+
     // GET endpoint to fetch a setting (public, no auth required)
     app.get('/api/v1/settings/:key', async (req, res) => {
         try {
@@ -538,8 +814,6 @@ async function main() {
             const { key } = req.params;
             const { value } = req.body;
 
-            console.log(`[SETTINGS] Attempting to update key="${key}" to value=${value}`);
-
             if (!key || typeof key !== 'string') {
                 return res.status(400).json({ error: 'key is required and must be a string.' });
             }
@@ -548,11 +822,9 @@ async function main() {
                 return res.status(400).json({ error: 'value must be a boolean.' });
             }
 
-            const { error: upsertError, data: upsertData } = await supabase
+            const { error: upsertError } = await supabase
                 .from('settings')
                 .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-
-            console.log(`[SETTINGS] Upsert result - Error: ${upsertError?.message || 'none'}, Data:`, upsertData);
 
             if (upsertError) {
                 console.error("Error updating setting:", upsertError);
