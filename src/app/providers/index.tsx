@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from '@/features/auth';
 import { supabase } from '@/shared/lib/supabase';
 import { Spin } from 'antd';
+import { UserChangeHandler } from './user-change-handler';
 
 export const queryClient = new QueryClient();
 
@@ -15,14 +16,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
 
   useEffect(() => {
-    // Initial session check - WAIT for setSession to complete
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      await setSession(session); // Wait for profile to load
+      await setSession(session);
       setLoading(false);
       setInitialLoadComplete(true);
     });
 
-    // Set up listener for future auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -35,7 +34,6 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, [setSession, setLoading]);
 
-  // Don't render router until initial session is loaded and profile is fetched
   if (!initialLoadComplete) {
     return <Spin fullscreen />;
   }
@@ -43,13 +41,15 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   return (
     <React.StrictMode>
       <BrowserRouter>
-        <QueryClientProvider client={queryClient}>
-          <ThemeProvider>
-            <AntApp>
+        <UserChangeHandler>
+          <QueryClientProvider client={queryClient}>
+            <ThemeProvider>
+              <AntApp>
                 {children}
-            </AntApp>
-          </ThemeProvider>
-        </QueryClientProvider>
+              </AntApp>
+            </ThemeProvider>
+          </QueryClientProvider>
+        </UserChangeHandler>
       </BrowserRouter>
     </React.StrictMode>
   );

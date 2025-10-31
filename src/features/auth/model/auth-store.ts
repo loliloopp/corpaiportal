@@ -40,6 +40,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   signOut: async () => {
     await supabase.auth.signOut();
+    // Clearing the session will trigger the onAuthStateChange listener,
+    // which will then update the user state and trigger the UserChangeHandler.
+    // No need to clear other stores here directly.
     set({ session: null, user: null, profile: null, isProfileLoading: false });
   },
   signUp: async ({ email, password, lastName }) => {
