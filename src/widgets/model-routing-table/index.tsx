@@ -1,5 +1,5 @@
 import React from 'react';
-import { Table, Switch, Typography, message, Spin } from 'antd';
+import { Table, Switch, Typography, App, Spin } from 'antd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { modelRoutingApi, ModelRoutingConfig } from '@/entities/models/api/model-routing-api';
 import { MODELS, MODEL_OPENROUTER_MAPPING } from '@/shared/config/models.config';
@@ -15,6 +15,7 @@ const PROVIDER_NAMES: Record<string, string> = {
 };
 
 const ModelRoutingTable: React.FC = () => {
+    const { message } = App.useApp();
     const queryClient = useQueryClient();
 
     const { data: routingConfig, isLoading } = useQuery<ModelRoutingConfig[]>({

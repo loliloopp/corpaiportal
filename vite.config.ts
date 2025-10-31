@@ -13,8 +13,9 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://aihub.fvds.ru',
+        target: process.env.VITE_API_URL || 'http://localhost:3000',
         changeOrigin: true,
+        secure: false,
       },
     },
   },

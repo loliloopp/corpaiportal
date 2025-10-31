@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { Modal } from 'antd'; // Import Modal
 import { nanoid } from 'nanoid';
 import { queryClient } from '@/app/providers'; // Import queryClient
 import { Message } from './types';
@@ -26,12 +25,14 @@ interface ChatState {
   openRouterModels: Model[]; // Store OpenRouter models separately
   loading: boolean;
   onSendMessageStart: (() => void) | null; // Callback
+  onError: ((error: { title: string; content: string }) => void) | null; // Error callback
   fetchConversations: (userId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
   fetchAvailableModels: (userId: string) => Promise<void>; // New function
   fetchOpenRouterModels: () => Promise<void>; // Load OpenRouter models
   setActiveConversation: (conversationId: string | null) => void;
   setSelectedModel: (model: string) => void;
+  setErrorHandler: (handler: ((error: { title: string; content: string }) => void) | null) => void;
   sendMessage: (content: string) => void;
 }
 
@@ -48,6 +49,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     openRouterModels: [], // Initial state for OpenRouter models
     loading: false,
     onSendMessageStart: null, // Initial value
+    onError: null, // Initial value
+    setErrorHandler: (handler) => set({ onError: handler }),
     fetchConversations: async (userId: string) => {
       set({ loading: true });
       try {
@@ -165,10 +168,18 @@ export const useChatStore = create<ChatState>((set, get) => {
         // On error, remove the optimistic message
         set((state) => ({ messages: state.messages.filter(m => m.id !== optimisticUserMessage.id) }));
 
-        Modal.error({
-            title: 'Ошибка запроса',
-            content: error.message || 'Не удалось выполнить запрос. Попробуйте позже.',
-        });
+        // Custom message for rate limit errors
+        const isRateLimit = error.status === 429 || error.code === 'DAILY_LIMIT_EXCEEDED';
+        const title = isRateLimit ? 'Лимит запросов превышен' : 'Ошибка запроса';
+        const content = error.message || 'Не удалось выполнить запрос. Попробуйте позже.';
+
+        // Use callback if available, otherwise fallback to console
+        const errorHandler = get().onError;
+        if (errorHandler) {
+          errorHandler({ title, content });
+        } else {
+          console.error(title, content);
+        }
         
       } finally {
           set({ loading: false });

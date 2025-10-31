@@ -27,18 +27,31 @@ export const sendAIRequest = async (model: string, messages: Message[], conversa
 
     if (!response.ok) {
         let errorMsg = `Request failed with status ${response.status}`;
+        let errorCode: string | undefined;
+        
         try {
             // Try to parse the error response as JSON
             const errorData = await response.json();
             if (errorData && typeof errorData.error === 'string') {
                 errorMsg = errorData.error;
             }
+            if (errorData && errorData.code) {
+                errorCode = errorData.code;
+            }
         } catch (e) {
             // If response is not JSON (e.g., a 404 from Nginx returns HTML), use the response text
-            const textError = await response.text();
-            errorMsg = textError || errorMsg;
+            try {
+                const textError = await response.text();
+                errorMsg = textError || errorMsg;
+            } catch {
+                // Fallback to default message
+            }
         }
-        throw new Error(errorMsg);
+        
+        const error = new Error(errorMsg) as Error & { code?: string; status?: number };
+        error.code = errorCode;
+        error.status = response.status;
+        throw error;
     }
 
     return response.json();

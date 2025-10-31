@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { App, Modal } from 'antd';
 import { ChatWindow } from '@/widgets/chat-window';
 import { useChatStore } from '@/entities/chat/model/chat-store';
 import { useParams } from 'react-router-dom';
@@ -6,6 +7,7 @@ import { useAuthStore } from '@/features/auth';
 import { useNavigate } from 'react-router-dom';
 
 const ChatPage = () => {
+  const { modal } = App.useApp();
   const { 
     messages, 
     sendMessage: storeSendMessage, 
@@ -15,10 +17,23 @@ const ChatPage = () => {
     fetchAvailableModels,
     fetchOpenRouterModels,
     fetchConversations,
+    setErrorHandler,
   } = useChatStore();
   const { conversationId } = useParams<{ conversationId: string }>();
   const { user } = useAuthStore();
   const navigate = useNavigate();
+
+  // Set error handler using Ant Design App context
+  useEffect(() => {
+    setErrorHandler((error) => {
+      modal.error({
+        title: error.title,
+        content: error.content,
+        okText: 'Понятно',
+      });
+    });
+    return () => setErrorHandler(null);
+  }, [modal, setErrorHandler]);
 
   // Sync URL with store
   useEffect(() => {

@@ -38,11 +38,14 @@ export const getUserModelUsageStats = async (userId: string, period: 'day' | 'we
     return data;
 }
 
-// We can reuse the one from users-api, but for consistency let's have it here too.
+// Admin function - uses proxy API for consistency
 export const getAllUsersForStats = async () => {
-    const { data, error } = await supabase
-        .from('user_profiles')
-        .select('id, email, display_name');
-    if (error) throw error;
-    return data;
+    const { getAllUsers } = await import('@/entities/users/api/users-api');
+    const users = await getAllUsers();
+    // Return only needed fields for stats
+    return users.map(user => ({
+        id: user.id,
+        email: user.email,
+        display_name: user.display_name,
+    }));
 }

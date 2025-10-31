@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -9,7 +9,7 @@ dotenv.config();
 // =================================================================
 // Configuration & Globals
 // =================================================================
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3000;
 
 const AI_PROVIDERS_CONFIG: Record<string, { provider: string, url: string, apiKey: string | undefined }> = {
     'gpt-5': { provider: 'openai', url: 'https://api.openai.com/v1/chat/completions', apiKey: process.env.OPENAI_API_KEY },
@@ -52,6 +52,89 @@ async function loadModelRoutingConfig(supabase: SupabaseClient) {
     }
 }
 
+// Authentication & Authorization middleware
+interface AuthenticatedRequest extends Request {
+    user?: { id: string; email?: string };
+    profile?: { role: string };
+}
+
+function createAuthMiddleware(supabase: SupabaseClient) {
+    return async function authenticateUser(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const authHeader = req.headers.authorization;
+            const jwt = authHeader?.replace('Bearer ', '') || req.body?.jwt;
+
+            if (!jwt) {
+                return res.status(401).json({ error: 'Missing authentication token.' });
+            }
+
+            const { data: { user }, error: userError } = await supabase.auth.getUser(jwt);
+            if (userError || !user) {
+                return res.status(401).json({ error: 'Invalid authentication token.' });
+            }
+
+            // Get user profile
+            const { data: profile, error: profileError } = await supabase
+                .from('user_profiles')
+                .select('role')
+                .eq('id', user.id)
+                .single();
+
+            if (profileError || !profile) {
+                return res.status(403).json({ error: 'User profile not found.' });
+            }
+
+            req.user = { id: user.id, email: user.email };
+            req.profile = profile;
+            next();
+        } catch (error: any) {
+            console.error('Authentication error:', error);
+            return res.status(500).json({ error: 'Authentication failed.' });
+        }
+    };
+}
+
+function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    if (!req.profile || req.profile.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required.' });
+    }
+    next();
+}
+
+// Validation helpers
+function validateChatRequest(body: any): { valid: boolean; error?: string } {
+    if (!body.model || typeof body.model !== 'string') {
+        return { valid: false, error: 'Model is required and must be a string.' };
+    }
+    if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
+        return { valid: false, error: 'Messages must be a non-empty array.' };
+    }
+    if (body.messages.length > 100) {
+        return { valid: false, error: 'Maximum 100 messages allowed per request.' };
+    }
+    
+    // Validate each message
+    for (const msg of body.messages) {
+        if (!msg.role || !['user', 'assistant', 'system'].includes(msg.role)) {
+            return { valid: false, error: 'Invalid message role. Must be user, assistant, or system.' };
+        }
+        if (!msg.content || typeof msg.content !== 'string') {
+            return { valid: false, error: 'Message content is required and must be a string.' };
+        }
+        // Check message size - approximately 10MB limit (10MB ≈ 10,000,000 bytes ≈ 5,000,000 characters for UTF-8)
+        // But we'll use a more conservative limit of 8MB to account for message overhead
+        if (msg.content.length > 4000000) {
+            return { valid: false, error: 'Message content exceeds maximum size of 8MB.' };
+        }
+    }
+
+    if (body.conversationId && typeof body.conversationId !== 'string') {
+        return { valid: false, error: 'ConversationId must be a string if provided.' };
+    }
+
+    return { valid: true };
+}
+
 
 // =================================================================
 // Main Application Setup
@@ -74,7 +157,7 @@ async function main() {
     // 3. Create Express App
     const app = express();
     app.use(cors({
-        origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000', 'http://185.200.179.0'],
+        origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000', 'http://185.200.179.0', 'https://aihub.fvds.ru'],
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
         allowedHeaders: ['Content-Type', 'Authorization'],
@@ -94,7 +177,6 @@ async function main() {
     });
 
     app.get('/api/v1/openrouter-models', async (req, res) => {
-        console.log("GET /api/v1/openrouter-models hit");
         try {
             if (cachedModels && (Date.now() - cacheTimestamp < CACHE_DURATION)) {
                 return res.status(200).json(cachedModels);
@@ -110,7 +192,6 @@ async function main() {
     });
 
     app.get('/api/v1/configured-models', async (req, res) => {
-        console.log("GET /api/v1/configured-models hit");
         try {
             const { data, error } = await supabase.from('model_routing_config').select('model_id');
             if (error) throw error;
@@ -123,7 +204,6 @@ async function main() {
     });
 
     app.get('/api/v1/models', async (req, res) => {
-        console.log("GET /api/v1/models hit");
         try {
             const { data, error } = await supabase.from('models').select('model_id, display_name, provider');
             if (error) throw error;
@@ -140,7 +220,6 @@ async function main() {
     });
 
     app.get('/api/v1/model-routing', async (req, res) => {
-        console.log("GET /api/v1/model-routing hit");
         try {
             const { data, error } = await supabase.from('model_routing_config').select('*');
             if (error) throw error;
@@ -152,7 +231,6 @@ async function main() {
     });
 
     app.put('/api/v1/model-routing/:modelId', async (req, res) => {
-        console.log(`PUT /api/v1/model-routing/${req.params.modelId} hit`);
         try {
             const { modelId } = req.params;
             const { useOpenRouter, openRouterModelId } = req.body;
@@ -171,12 +249,17 @@ async function main() {
     });
 
     app.post('/api/v1/chat', async (req, res) => {
-        console.log("POST /api/v1/chat hit");
+        // Validate request body
+        const validation = validateChatRequest(req.body);
+        if (!validation.valid) {
+            return res.status(400).json({ error: validation.error });
+        }
+
         const { model, messages, jwt, conversationId: convId } = req.body;
         let conversationId = convId;
 
-        if (!model || !messages || !jwt) {
-            return res.status(400).json({ error: 'Missing required fields.' });
+        if (!jwt) {
+            return res.status(400).json({ error: 'Missing authentication token.' });
         }
 
         try {
@@ -186,9 +269,8 @@ async function main() {
                 console.error("Auth error:", userError);
                 return res.status(401).json({ error: 'Invalid JWT.' });
             }
-            console.log(`Chat request for model ${model} by user ${user.id}`);
 
-            // 1.5 Check user request limits
+            // 1.5 Check user request limit
             const { data: profile, error: profileError } = await supabase
                 .from('user_profiles')
                 .select('daily_request_limit')
@@ -201,22 +283,30 @@ async function main() {
             }
 
             const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+            const todayStart = `${today}T00:00:00.000Z`;
+
+            // Check daily request limit
             const { count, error: countError } = await supabase
                 .from('usage_logs')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', user.id)
-                .gte('created_at', `${today}T00:00:00.000Z`);
+                .eq('status', 'success')
+                .gte('created_at', todayStart);
 
             if (countError) {
                 console.error("Usage count error:", countError);
                 return res.status(500).json({ error: 'Could not count user usage.' });
             }
 
-            if (count !== null && count >= profile.daily_request_limit) {
-                console.log(`User ${user.id} has reached their daily limit of ${profile.daily_request_limit} requests.`);
-                return res.status(429).json({ error: 'You have reached your daily request limit.' });
+            const requestLimit = profile.daily_request_limit || 0;
+            if (count !== null && count >= requestLimit) {
+                return res.status(429).json({ 
+                    error: 'Вы достигли дневного лимита запросов.',
+                    limit: requestLimit,
+                    used: count,
+                    code: 'DAILY_LIMIT_EXCEEDED'
+                });
             }
-            console.log(`User ${user.id} usage: ${count}/${profile.daily_request_limit}`);
 
 
             // 2. Create conversation if it's a new one
@@ -229,7 +319,6 @@ async function main() {
 
                 if (createError) throw createError;
                 conversationId = newConversation.id;
-                console.log(`Created new conversation with ID: ${conversationId}`);
             }
 
             // 3. Save user message
@@ -243,7 +332,6 @@ async function main() {
             
             if (saveMessageError) throw saveMessageError;
             const userMessageId = savedUserMessage?.id;
-            console.log(`Saved user message to conversation ${conversationId}`);
 
 
             // TODO: Implement user limits check here
@@ -266,14 +354,12 @@ async function main() {
             let requestBody: any;
 
             if (useOpenRouter && OPENROUTER_CONFIG.apiKey) {
-                console.log(`Routing to OpenRouter for model: ${model}`);
                 targetUrl = OPENROUTER_CONFIG.url;
                 apiKey = OPENROUTER_CONFIG.apiKey;
                 provider = OPENROUTER_CONFIG.provider;
                 finalModelId = routeConfig?.openRouterModelId || model; // Fallback to original model ID
                 requestBody = { model: finalModelId, messages: cleanedMessages };
             } else {
-                console.log(`Routing to direct API for model: ${model}`);
                 const providerConfig = AI_PROVIDERS_CONFIG[model];
                 if (!providerConfig || !providerConfig.apiKey) {
                     throw new Error(`Configuration for model ${model} is missing or incomplete.`);
@@ -304,7 +390,6 @@ async function main() {
             }
 
             // 5. Make the request to the AI provider
-            console.log(`Sending request to ${provider} at ${targetUrl}`);
             const aiResponse = await axios.post(targetUrl, requestBody, {
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
@@ -328,7 +413,6 @@ async function main() {
                 content: assistantContent,
             });
             if (saveAssistantError) throw saveAssistantError;
-            console.log(`Saved assistant message to conversation ${conversationId}`);
 
             // Log usage and token counts
             // For now, count tokens as input + output tokens
@@ -349,8 +433,6 @@ async function main() {
             if (usageError) {
                 console.error('Failed to log usage:', usageError.message);
                 // Don't throw - usage logging failure shouldn't break the response
-            } else {
-                console.log(`Logged usage: ${totalTokens} tokens for model ${model}`);
             }
 
             // 8. Send response back to the client
@@ -370,12 +452,93 @@ async function main() {
             res.status(500).json({ error: 'Internal server error.', details: error.message });
         }
     });
+
+    // Create auth middleware with supabase client
+    const authenticateUser = createAuthMiddleware(supabase);
+
+    // Admin endpoints - require authentication and admin role
+    app.get('/api/v1/admin/users', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+        try {
+            const { data, error } = await supabase
+                .from('user_profiles')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            res.status(200).json(data);
+        } catch (error: any) {
+            console.error("Error fetching users:", error);
+            res.status(500).json({ error: 'Failed to fetch users', details: error.message });
+        }
+    });
+
+    app.put('/api/v1/admin/users/:userId', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+        try {
+            const { userId } = req.params;
+            const updates = req.body;
+
+            // Validate updates - only allow specific fields
+            const allowedFields = ['daily_request_limit', 'role', 'display_name', 'email'];
+            const filteredUpdates: any = {};
+            for (const field of allowedFields) {
+                if (updates[field] !== undefined) {
+                    filteredUpdates[field] = updates[field];
+                }
+            }
+
+            if (Object.keys(filteredUpdates).length === 0) {
+                return res.status(400).json({ error: 'No valid fields to update.' });
+            }
+
+            // Validate role if provided
+            if (filteredUpdates.role !== undefined) {
+                if (!['user', 'admin'].includes(filteredUpdates.role)) {
+                    return res.status(400).json({ error: 'Invalid role. Must be "user" or "admin".' });
+                }
+                // Ensure role is lowercase for enum type
+                filteredUpdates.role = filteredUpdates.role.toLowerCase();
+            }
+
+            // Validate daily_request_limit if provided
+            if (filteredUpdates.daily_request_limit !== undefined) {
+                const limit = Number(filteredUpdates.daily_request_limit);
+                if (isNaN(limit) || limit < 0 || limit > 100000) {
+                    return res.status(400).json({ error: 'daily_request_limit must be a number between 0 and 100000.' });
+                }
+                filteredUpdates.daily_request_limit = limit;
+            }
+
+            const { data, error } = await supabase
+                .from('user_profiles')
+                .update(filteredUpdates)
+                .eq('id', userId)
+                .select()
+                .single();
+
+            if (error) {
+                console.error("Error updating user:", error);
+                throw error;
+            }
+            
+            res.status(200).json(data);
+        } catch (error: any) {
+            console.error("Error updating user:", error);
+            res.status(500).json({ 
+                error: 'Failed to update user', 
+                details: error.message || error.details || 'Unknown error',
+            });
+        }
+    });
+
     console.log("Routes defined.");
 
 
     // 5. Start Server
     app.listen(port, () => {
         console.log(`✅ Proxy server is running and listening at http://localhost:${port}`);
+        console.log(`📋 Admin endpoints available:`);
+        console.log(`   GET  /api/v1/admin/users`);
+        console.log(`   PUT  /api/v1/admin/users/:userId`);
     });
 
     // This promise never resolves, which will keep the process running.
