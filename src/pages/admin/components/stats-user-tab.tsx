@@ -15,6 +15,7 @@ interface UserStats {
   models: string;
   requests: number;
   tokens: number;
+  cost: number;
 }
 
 export const StatsUserTab: React.FC = () => {
@@ -65,6 +66,7 @@ export const StatsUserTab: React.FC = () => {
           const modelStats = await getUserModelUsageStats(user.id, period);
           const totalRequests = modelStats?.reduce((sum, m) => sum + (m.total_requests || 0), 0) || 0;
           const totalTokens = modelStats?.reduce((sum, m) => sum + (m.total_tokens || 0), 0) || 0;
+          const totalCost = modelStats?.reduce((sum, m) => sum + (m.total_cost || 0), 0) || 0;
           const models = modelStats?.map(m => m.model).join(', ') || '';
           return {
             key: user.id,
@@ -74,6 +76,7 @@ export const StatsUserTab: React.FC = () => {
             models: models,
             requests: totalRequests,
             tokens: totalTokens,
+            cost: totalCost,
           };
         })
       );
@@ -103,15 +106,23 @@ export const StatsUserTab: React.FC = () => {
     model: m.model,
     requests: m.total_requests,
     tokens: m.total_tokens,
+    cost: m.total_cost,
   })) || [];
 
   const totalRequests = tableData.reduce((acc, cur) => acc + Number(cur.requests), 0);
   const totalTokens = tableData.reduce((acc, cur) => acc + Number(cur.tokens), 0);
+  const totalCost = tableData.reduce((acc, cur) => acc + Number(cur.cost || 0), 0);
   
   const columns = [
     { title: 'Модель', dataIndex: 'model', key: 'model' },
     { title: 'Запросы', dataIndex: 'requests', key: 'requests' },
     { title: 'Токены', dataIndex: 'tokens', key: 'tokens' },
+    { 
+      title: 'Стоимость (USD)', 
+      dataIndex: 'cost', 
+      key: 'cost',
+      render: (cost: number) => cost ? `$${cost.toFixed(4)}` : '—',
+    },
   ];
   
   const historyColumns = [
@@ -119,6 +130,12 @@ export const StatsUserTab: React.FC = () => {
     { title: 'Запрос', dataIndex: 'content', key: 'content' },
     { title: 'Модель', dataIndex: 'model', key: 'model' },
     { title: 'Токены', dataIndex: 'total_tokens', key: 'total_tokens' },
+    { 
+      title: 'Стоимость (USD)', 
+      dataIndex: 'cost', 
+      key: 'cost',
+      render: (cost: number) => cost ? `$${cost.toFixed(4)}` : '—',
+    },
   ];
 
   const allUsersColumns = [
@@ -135,6 +152,12 @@ export const StatsUserTab: React.FC = () => {
     { title: 'Используемые модели', dataIndex: 'models', key: 'models' },
     { title: 'Запросы', dataIndex: 'requests', key: 'requests' },
     { title: 'Токены', dataIndex: 'tokens', key: 'tokens' },
+    { 
+      title: 'Стоимость (USD)', 
+      dataIndex: 'cost', 
+      key: 'cost',
+      render: (cost: number) => cost ? `$${cost.toFixed(4)}` : '—',
+    },
   ];
 
   const handleTableChange = (newPagination: { current?: number; pageSize?: number }) => {
@@ -217,6 +240,7 @@ export const StatsUserTab: React.FC = () => {
                 <Table.Summary.Cell index={0}><strong>Всего</strong></Table.Summary.Cell>
                 <Table.Summary.Cell index={1}><strong>{totalRequests}</strong></Table.Summary.Cell>
                 <Table.Summary.Cell index={2}><strong>{totalTokens}</strong></Table.Summary.Cell>
+                <Table.Summary.Cell index={3}><strong>${totalCost.toFixed(4)}</strong></Table.Summary.Cell>
               </Table.Summary.Row>
             )}
           />
@@ -229,6 +253,7 @@ export const StatsUserTab: React.FC = () => {
               <Legend />
               <Line type="linear" dataKey="total_requests" stroke="#8884d8" name="Запросы" />
               <Line type="linear" dataKey="total_tokens" stroke="#82ca9d" name="Токены" />
+              <Line type="linear" dataKey="total_cost" stroke="#ffc658" name="Стоимость (USD)" />
             </LineChart>
           </ResponsiveContainer>
           <Title level={4} style={{ marginTop: 20 }}>История запросов</Title>

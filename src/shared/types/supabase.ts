@@ -170,6 +170,7 @@ export interface Database {
           completion_tokens: number | null
           total_tokens: number | null
           status: string | null
+          cost: number | null
           created_at: string
         }
         Insert: {
@@ -181,6 +182,7 @@ export interface Database {
           completion_tokens?: number | null
           total_tokens?: number | null
           status?: string | null
+          cost?: number | null
           created_at?: string
         }
         Update: {
@@ -192,6 +194,7 @@ export interface Database {
           completion_tokens?: number | null
           total_tokens?: number | null
           status?: string | null
+          cost?: number | null
           created_at?: string
         }
       }
