@@ -406,13 +406,18 @@ async function main() {
             }
 
             // 7. Save assistant message
-            const { error: saveAssistantError } = await supabase.from('messages').insert({
+            const { data: savedAssistantMessage, error: saveAssistantError } = await supabase.from('messages').insert({
                 conversation_id: conversationId,
                 user_id: user.id,
                 role: 'assistant',
                 content: assistantContent,
-            });
-            if (saveAssistantError) throw saveAssistantError;
+                model: model, // Store model_id for reference
+            }).select().single();
+            if (saveAssistantError) {
+                console.error('Failed to save assistant message:', saveAssistantError);
+                throw saveAssistantError;
+            }
+            const assistantMessageId = savedAssistantMessage?.id;
 
             // Log usage and token counts
             // For now, count tokens as input + output tokens
@@ -421,17 +426,18 @@ async function main() {
             const outputTokens = aiResponse.data.usage?.completion_tokens || Math.ceil(assistantContent.split(' ').length / 0.75);
             const totalTokens = inputTokens + outputTokens;
 
+            // Store model_id (text) in usage_logs.model, not UUID
             const { error: usageError } = await supabase.from('usage_logs').insert({
                 user_id: user.id,
-                model: model,
+                model: model, // model_id (text like "deepseek-chat")
                 prompt_tokens: inputTokens,
                 completion_tokens: outputTokens,
                 total_tokens: totalTokens,
                 status: 'success',
-                message_id: userMessageId,
+                message_id: assistantMessageId, // Associate with assistant message, not user message
             });
             if (usageError) {
-                console.error('Failed to log usage:', usageError.message);
+                console.error('Failed to log usage:', usageError);
                 // Don't throw - usage logging failure shouldn't break the response
             }
 
@@ -448,8 +454,14 @@ async function main() {
             res.status(200).json(clientResponse);
 
         } catch (error: any) {
-            console.error("Chat endpoint error:", error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-            res.status(500).json({ error: 'Internal server error.', details: error.message });
+            console.error("Chat endpoint error:", error);
+            console.error("Error details:", error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+            console.error("Error stack:", error.stack);
+            res.status(500).json({ 
+                error: 'Internal server error.', 
+                details: error.message || 'Unknown error',
+                code: error.code || 'INTERNAL_ERROR'
+            });
         }
     });
 
@@ -530,6 +542,87 @@ async function main() {
         }
     });
 
+    // Admin endpoint - Add model from OpenRouter
+    app.post('/api/v1/admin/models', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+        try {
+            const { model_id, display_name, openrouter_model_id, temperature, is_default_access } = req.body;
+
+            // Validation
+            if (!model_id || typeof model_id !== 'string') {
+                return res.status(400).json({ error: 'model_id is required and must be a string.' });
+            }
+            if (!display_name || typeof display_name !== 'string') {
+                return res.status(400).json({ error: 'display_name is required and must be a string.' });
+            }
+            if (!openrouter_model_id || typeof openrouter_model_id !== 'string') {
+                return res.status(400).json({ error: 'openrouter_model_id is required and must be a string.' });
+            }
+
+            // Check if model already exists
+            const { data: existingModel, error: checkError } = await supabase
+                .from('models')
+                .select('model_id')
+                .eq('model_id', model_id)
+                .single();
+
+            if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = no rows returned
+                console.error("Error checking existing model:", checkError);
+                throw checkError;
+            }
+
+            if (existingModel) {
+                return res.status(409).json({ error: 'Model with this model_id already exists.' });
+            }
+
+            // Insert into models table
+            const { data: newModel, error: insertError } = await supabase
+                .from('models')
+                .insert({
+                    model_id,
+                    display_name,
+                    provider: 'openrouter',
+                    temperature: temperature || 0.7,
+                    is_default_access: is_default_access || false,
+                })
+                .select()
+                .single();
+
+            if (insertError) {
+                console.error("Error inserting model:", insertError);
+                throw insertError;
+            }
+
+            // Insert into model_routing_config table
+            const { error: routingError } = await supabase
+                .from('model_routing_config')
+                .insert({
+                    model_id,
+                    use_openrouter: true,
+                    openrouter_model_id,
+                });
+
+            if (routingError) {
+                console.error("Error inserting routing config:", routingError);
+                // Try to rollback model insertion
+                await supabase.from('models').delete().eq('id', newModel.id);
+                throw routingError;
+            }
+
+            res.status(201).json({
+                id: newModel.id,
+                model_id: newModel.model_id,
+                display_name: newModel.display_name,
+                provider: newModel.provider,
+            });
+        } catch (error: any) {
+            console.error("Error adding model:", error);
+            res.status(500).json({ 
+                error: 'Failed to add model', 
+                details: error.message || 'Unknown error',
+            });
+        }
+    });
+
     console.log("Routes defined.");
 
 
@@ -539,6 +632,7 @@ async function main() {
         console.log(`📋 Admin endpoints available:`);
         console.log(`   GET  /api/v1/admin/users`);
         console.log(`   PUT  /api/v1/admin/users/:userId`);
+        console.log(`   POST /api/v1/admin/models`);
     });
 
     // This promise never resolves, which will keep the process running.

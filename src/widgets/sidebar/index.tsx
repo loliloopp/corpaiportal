@@ -32,7 +32,7 @@ export const Sidebar = () => {
 
   const handleNewChat = () => {
     setActiveConversation(null);
-    navigate('/chat');
+    navigate('/chat', { replace: true });
   };
 
   const historyItems: MenuProps['items'] = loading

@@ -49,19 +49,26 @@ const UsageStats = () => {
             
             if (profileError) throw new Error(profileError.message);
             
-            // Count successful requests for today
+            // Count successful requests for today (from 00:00 to now)
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayStart = today.toISOString();
+            
             const { count, error: countError } = await supabase
                 .from('usage_logs')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', user.id)
                 .eq('status', 'success')
-                .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+                .gte('created_at', todayStart);
             
             if (countError) throw new Error(countError.message);
             
+            const usage = count || 0;
+            const limit = profileData?.daily_request_limit || 0;
+            
             return {
-                usage: count || 0,
-                limit: profileData?.daily_request_limit || 0
+                usage,
+                limit
             };
         },
         enabled: !!user,
@@ -115,6 +122,10 @@ export const Header = () => {
   const isDark = theme === 'dark';
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // Hooks must be called unconditionally, not inside conditional rendering
+  const { selectedModel, setSelectedModel, availableModels } = useChatStore();
+  const isChatPage = location.pathname.startsWith('/chat');
 
   const menuItems = [
     ...(profile?.role === 'admin'
@@ -150,12 +161,12 @@ export const Header = () => {
       height: 64
     }}>
       <Space size="large">
-        {location.pathname.startsWith('/chat') && (
+        {isChatPage && (
           <div style={{ minWidth: 220 }}>
             <ModelSelector 
-              value={useChatStore().selectedModel} 
-              onChange={useChatStore().setSelectedModel} 
-              availableModels={useChatStore().availableModels} 
+              value={selectedModel} 
+              onChange={setSelectedModel} 
+              availableModels={availableModels} 
             />
           </div>
         )}

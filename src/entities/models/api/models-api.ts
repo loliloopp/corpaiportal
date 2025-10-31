@@ -20,7 +20,76 @@ export const getModelsWithAccess = async (userId: string): Promise<ModelWithAcce
         console.error('Error fetching models with access:', error);
         throw error;
     }
-    return data;
+    return data || [];
+};
+
+/**
+ * Get model access for all users at once using optimized query
+ * Returns a map: userId -> ModelWithAccess[]
+ */
+export const getAllUsersModelAccess = async (userIds: string[]): Promise<Map<string, ModelWithAccess[]>> => {
+    if (userIds.length === 0) {
+        return new Map();
+    }
+
+    // Get all models first
+    const { data: allModels, error: modelsError } = await supabase
+        .from('models')
+        .select('id, model_id, display_name, provider, temperature');
+
+    if (modelsError) {
+        console.error('Error fetching all models:', modelsError);
+        throw modelsError;
+    }
+
+    if (!allModels || allModels.length === 0) {
+        return new Map();
+    }
+
+    // Get all user_model_access records for these users in one query
+    // Note: model_id in user_model_access is UUID referencing models.id
+    const { data: accessData, error: accessError } = await supabase
+        .from('user_model_access')
+        .select('user_id, model_id')
+        .in('user_id', userIds);
+
+    if (accessError) {
+        console.error('Error fetching user model access:', accessError);
+        throw accessError;
+    }
+
+    // Build access map: userId -> Set<modelUUID>
+    const accessMap = new Map<string, Set<string>>();
+    userIds.forEach(userId => {
+        accessMap.set(userId, new Set());
+    });
+
+    accessData?.forEach((row: { user_id: string; model_id: string }) => {
+        const userAccess = accessMap.get(row.user_id);
+        if (userAccess) {
+            // model_id in user_model_access is UUID (models.id), not model_id text
+            userAccess.add(row.model_id);
+        }
+    });
+
+    // Build result map: userId -> ModelWithAccess[]
+    const result = new Map<string, ModelWithAccess[]>();
+    
+    userIds.forEach(userId => {
+        const userAccessSet = accessMap.get(userId) || new Set();
+        const models: ModelWithAccess[] = allModels.map((model: { id: string; model_id: string; display_name: string; provider: string; temperature: number }) => ({
+            id: model.id,
+            model_id: model.model_id,
+            display_name: model.display_name,
+            provider: model.provider,
+            temperature: model.temperature,
+            // Check access by UUID (models.id), not by model_id text
+            has_access: userAccessSet.has(model.id),
+        }));
+        result.set(userId, models);
+    });
+
+    return result;
 };
 
 export const setModelPermission = async (userId: string, modelId: string, hasAccess: boolean) => {
@@ -47,42 +116,83 @@ export const getDatabaseModels = async (): Promise<Array<{ id: string; name: str
     return response;
 };
 
-export const getUserAccessibleModels = async (userId: string): Promise<Array<{ id: string; name: string; provider: string }>> => {
-    // Get all models first (from cache or fresh)
-    const allModels = await getDatabaseModels();
+export interface AccessibleModel {
+    id: string;
+    name: string;
+    provider: string;
+}
 
-    // Get user's accessible model UUIDs from user_model_access table
-    const { data: accessData, error: accessError } = await supabase
-        .from('user_model_access')
-        .select('model_id')
-        .eq('user_id', userId);
+/**
+ * Optimized version using RPC function with JOIN instead of 2 separate queries
+ */
+export const getUserAccessibleModels = async (userId: string): Promise<AccessibleModel[]> => {
+    // Use RPC function that already does JOIN and returns models with has_access flag
+    const { data, error } = await supabase.rpc('get_available_models_for_user', {
+        p_user_id: userId,
+    });
 
-    if (accessError) {
-        console.error('Error fetching user model access:', accessError);
-        throw accessError;
+    if (error) {
+        console.error('Error fetching accessible models:', error);
+        throw error;
     }
 
-    if (!accessData || accessData.length === 0) {
+    if (!data || data.length === 0) {
         return [];
     }
 
-    // Get the list of model UUIDs the user has access to
-    const userAccessModelIds = accessData.map((row: any) => row.model_id);
+    // Filter only models with access and transform to required format
+    return data
+        .filter((model: ModelWithAccess) => model.has_access === true)
+        .map((model: ModelWithAccess) => ({
+            id: model.model_id,
+            name: model.display_name,
+            provider: model.provider,
+        }));
+};
 
-    // Now get the actual models from models table that match these UUIDs
-    const { data: modelData, error: modelError } = await supabase
-        .from('models')
-        .select('model_id, display_name, provider')
-        .in('id', userAccessModelIds);
+export interface AddModelRequest {
+    model_id: string;
+    display_name: string;
+    openrouter_model_id: string;
+    temperature?: number;
+    is_default_access?: boolean;
+}
 
-    if (modelError) {
-        console.error('Error fetching accessible models:', modelError);
-        throw modelError;
+export interface AddModelResponse {
+    id: string;
+    model_id: string;
+    display_name: string;
+    provider: string;
+}
+
+/**
+ * Add a new model from OpenRouter
+ */
+export const addModelFromOpenRouter = async (modelData: AddModelRequest): Promise<AddModelResponse> => {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !session) {
+        throw new Error('User not authenticated.');
     }
 
-    return modelData?.map(row => ({
-        id: row.model_id,
-        name: row.display_name,
-        provider: row.provider,
-    })) || [];
+    const response = await fetch('/api/v1/admin/models', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(modelData),
+    });
+
+    if (!response.ok) {
+        let errorData: { error?: string; details?: string } | undefined;
+        try {
+            errorData = await response.json();
+        } catch {
+            // Ignore JSON parse errors
+        }
+        throw new Error(errorData?.error || `Failed to add model: ${response.statusText}`);
+    }
+
+    return response.json();
 };

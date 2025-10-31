@@ -1,8 +1,10 @@
-import React from 'react';
-import { Table, Switch, Typography, App, Spin } from 'antd';
+import React, { useState } from 'react';
+import { Table, Switch, Typography, App, Spin, Button } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { modelRoutingApi, ModelRoutingConfig } from '@/entities/models/api/model-routing-api';
 import { MODELS, MODEL_OPENROUTER_MAPPING } from '@/shared/config/models.config';
+import AddModelModal from '@/widgets/add-model-modal';
 
 const { Title } = Typography;
 
@@ -17,6 +19,7 @@ const PROVIDER_NAMES: Record<string, string> = {
 const ModelRoutingTable: React.FC = () => {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
     const { data: routingConfig, isLoading } = useQuery<ModelRoutingConfig[]>({
         queryKey: ['modelRouting'],
@@ -127,6 +130,15 @@ const ModelRoutingTable: React.FC = () => {
 
     return (
         <div style={{ padding: '0 0 24px 0' }}>
+            <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setIsAddModalOpen(true)}
+                >
+                    Добавить модель из openrouter.ai
+                </Button>
+            </div>
             <Spin spinning={isLoading}>
                 <Table
                     dataSource={sortedData}
@@ -139,6 +151,10 @@ const ModelRoutingTable: React.FC = () => {
                     pagination={false}
                 />
             </Spin>
+            <AddModelModal
+                open={isAddModalOpen}
+                onCancel={() => setIsAddModalOpen(false)}
+            />
         </div>
     );
 };

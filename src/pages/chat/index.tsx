@@ -35,15 +35,53 @@ const ChatPage = () => {
     return () => setErrorHandler(null);
   }, [modal, setErrorHandler]);
 
-  // Sync URL with store
+  // Sync URL conversationId with store on mount and when conversationId changes
   useEffect(() => {
     if (conversationId) {
+      // URL has conversationId - sync it with store
       if (conversationId !== activeConversation) {
         setActiveConversation(conversationId);
       }
     } else {
+      // URL doesn't have conversationId - check if we should restore from localStorage
+      const savedConversation = localStorage.getItem('activeConversation');
+      if (savedConversation) {
+        try {
+          const parsed = JSON.parse(savedConversation);
+          if (parsed) {
+            // Restore saved conversation
+            navigate(`/chat/${parsed}`, { replace: true });
+            return;
+          }
+        } catch (e) {
+          localStorage.removeItem('activeConversation');
+        }
+      }
+      // No saved conversation - clear store if needed
       if (activeConversation) {
         setActiveConversation(null);
+      }
+    }
+  }, [conversationId]); // Only depend on conversationId to avoid loops
+
+  // Sync store to URL when activeConversation changes (e.g., from sidebar "New Chat" button)
+  useEffect(() => {
+    if (activeConversation === null && conversationId) {
+      // Store cleared but URL still has conversationId - navigate to /chat
+      navigate('/chat', { replace: true });
+    } else if (activeConversation && activeConversation !== conversationId) {
+      // Store has conversationId but URL doesn't match - sync URL
+      navigate(`/chat/${activeConversation}`, { replace: true });
+    }
+  }, [activeConversation, conversationId, navigate]);
+
+  // Load messages when conversationId is set (handles refresh when activeConversation is already correct)
+  useEffect(() => {
+    if (conversationId) {
+      const { activeConversation: currentActive, fetchMessages } = useChatStore.getState();
+      // Load messages if conversationId matches activeConversation or is newly set
+      if (!currentActive || conversationId === currentActive) {
+        fetchMessages(conversationId);
       }
     }
   }, [conversationId]);

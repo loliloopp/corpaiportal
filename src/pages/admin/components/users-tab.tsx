@@ -3,7 +3,7 @@ import { Typography, Table, Select, InputNumber, Button, App, Form, Switch } fro
 import { EditOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getAllUsers, updateUserProfile, UserProfile } from '@/entities/users/api/users-api';
-import { getModelsWithAccess, setModelPermission, ModelWithAccess } from '@/entities/models/api/models-api';
+import { getModelsWithAccess, setModelPermission, ModelWithAccess, getAllUsersModelAccess } from '@/entities/models/api/models-api';
 
 const { Option } = Select;
 
@@ -91,13 +91,15 @@ export const UsersTab: React.FC = () => {
   >({
     queryKey: ['allUserModels', users?.map(u => u.id).join(',')],
     queryFn: async () => {
-      if (!users) return [];
-      return Promise.all(
-        users.map(async (user) => ({
-          userId: user.id,
-          models: await getModelsWithAccess(user.id),
-        }))
-      );
+      if (!users || users.length === 0) return [];
+      // Use optimized batch query instead of Promise.all
+      const userIds = users.map(u => u.id);
+      const accessMap = await getAllUsersModelAccess(userIds);
+      
+      return userIds.map(userId => ({
+        userId,
+        models: accessMap.get(userId) || [],
+      }));
     },
     enabled: !!users && users.length > 0,
   });

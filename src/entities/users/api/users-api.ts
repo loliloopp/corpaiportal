@@ -1,5 +1,6 @@
 import { supabase } from "@/shared/lib/supabase";
 import { Database } from "@/shared/types/supabase";
+import { APIError, parseAPIError } from "@/shared/lib/error-handler";
 
 export type UserProfile = Database['public']['Tables']['user_profiles']['Row'];
 
@@ -7,26 +8,38 @@ export type UserProfile = Database['public']['Tables']['user_profiles']['Row'];
 async function getAuthToken(): Promise<string> {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session) {
-        throw new Error('User not authenticated.');
+        throw new APIError('User not authenticated.', 401, 'AUTH_REQUIRED');
     }
     return session.access_token;
 }
 
 // Admin function - requires admin role, uses proxy API
 export const getAllUsers = async (): Promise<UserProfile[]> => {
-    const token = await getAuthToken();
-    const response = await fetch('/api/v1/admin/users', {
-        headers: {
-            'Authorization': `Bearer ${token}`,
-        },
-    });
+    try {
+        const token = await getAuthToken();
+        const response = await fetch('/api/v1/admin/users', {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+        });
 
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Failed to fetch users' }));
-        throw new Error(errorData.error || 'Failed to fetch users');
+        if (!response.ok) {
+            let errorData: { error?: string; code?: string } | undefined;
+            try {
+                errorData = await response.json();
+            } catch {
+                // Ignore JSON parse errors
+            }
+            throw parseAPIError(response, errorData);
+        }
+
+        return response.json();
+    } catch (error) {
+        if (error instanceof APIError) {
+            throw error;
+        }
+        throw new APIError('Failed to fetch users', 500, 'FETCH_ERROR', error);
     }
-
-    return response.json();
 }
 
 // Admin function - requires admin role, uses proxy API
@@ -34,22 +47,34 @@ export const updateUserProfile = async (
     userId: string,
     updates: Partial<UserProfile>
 ): Promise<UserProfile> => {
-    const token = await getAuthToken();
-    const response = await fetch(`/api/v1/admin/users/${userId}`, {
-        method: 'PUT',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(updates),
-    });
+    try {
+        const token = await getAuthToken();
+        const response = await fetch(`/api/v1/admin/users/${userId}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(updates),
+        });
 
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Failed to update user' }));
-        throw new Error(errorData.error || 'Failed to update user');
+        if (!response.ok) {
+            let errorData: { error?: string; code?: string } | undefined;
+            try {
+                errorData = await response.json();
+            } catch {
+                // Ignore JSON parse errors
+            }
+            throw parseAPIError(response, errorData);
+        }
+
+        return response.json();
+    } catch (error) {
+        if (error instanceof APIError) {
+            throw error;
+        }
+        throw new APIError('Failed to update user', 500, 'UPDATE_ERROR', error);
     }
-
-    return response.json();
 }
 
 export const getCurrentUserSimpleStats = async (userId: string) => {
