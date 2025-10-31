@@ -58,6 +58,64 @@ export interface Database {
           created_at?: string
         }
       }
+      models: {
+        Row: {
+          id: string
+          model_id: string
+          display_name: string
+          provider: string
+          temperature: number
+          is_default_access: boolean
+          description: string | null
+          approximate_cost: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          model_id: string
+          display_name: string
+          provider: string
+          temperature?: number
+          is_default_access?: boolean
+          description?: string | null
+          approximate_cost?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          model_id?: string
+          display_name?: string
+          provider?: string
+          temperature?: number
+          is_default_access?: boolean
+          description?: string | null
+          approximate_cost?: string | null
+          created_at?: string
+        }
+      }
+      settings: {
+        Row: {
+          id: string
+          key: string
+          value: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          key: string
+          value?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          key?: string
+          value?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
       user_profiles: {
         Row: {
           id: string

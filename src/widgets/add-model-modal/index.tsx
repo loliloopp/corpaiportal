@@ -31,6 +31,7 @@ const AddModelModal: React.FC<AddModelModalProps> = ({ open, onCancel }) => {
                 model_id: modelData.model_id,
                 display_name: modelData.display_name,
                 openrouter_model_id: modelData.openrouter_model_id,
+                description: selectedModel?.description,
             }),
         onSuccess: () => {
             message.success('Модель успешно добавлена');
@@ -59,9 +60,16 @@ const AddModelModal: React.FC<AddModelModalProps> = ({ open, onCancel }) => {
 
     const handleModelSelect = (model: OpenRouterModel) => {
         setSelectedModel(model);
-        // Pre-fill display name from OpenRouter model name
+        // Pre-fill display name from OpenRouter model name, removing provider prefix
         if (!displayName && model.name) {
-            setDisplayName(model.name);
+            // Remove provider prefix if format is "Provider: Name" or "provider/name"
+            let cleanName = model.name;
+            if (cleanName.includes(': ')) {
+                cleanName = cleanName.split(': ')[1];
+            } else if (cleanName.includes('/')) {
+                cleanName = cleanName.split('/')[1];
+            }
+            setDisplayName(cleanName);
         }
     };
 

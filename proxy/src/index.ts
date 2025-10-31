@@ -150,6 +150,8 @@ async function main() {
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
     console.log("Supabase client created.");
 
+    // Create middleware with supabase instance
+    const authenticateUser = createAuthMiddleware(supabase);
 
     // 2. Initial data loading
     await loadModelRoutingConfig(supabase);
@@ -221,9 +223,43 @@ async function main() {
 
     app.get('/api/v1/model-routing', async (req, res) => {
         try {
-            const { data, error } = await supabase.from('model_routing_config').select('*');
-            if (error) throw error;
-            res.status(200).json(data);
+            // Get routing config
+            const { data: routingConfig, error: routingError } = await supabase
+                .from('model_routing_config')
+                .select('*');
+            
+            if (routingError) throw routingError;
+            
+            // Get all models to get provider info, description, and approximate cost
+            const { data: models, error: modelsError } = await supabase
+                .from('models')
+                .select('model_id, provider, description, approximate_cost');
+            
+            if (modelsError) throw modelsError;
+            
+            // Create maps of model_id -> provider, description, and cost
+            const providerMap = new Map<string, string>();
+            const descriptionMap = new Map<string, string>();
+            const costMap = new Map<string, string>();
+            models?.forEach((model: any) => {
+                providerMap.set(model.model_id, model.provider);
+                if (model.description) {
+                    descriptionMap.set(model.model_id, model.description);
+                }
+                if (model.approximate_cost) {
+                    costMap.set(model.model_id, model.approximate_cost);
+                }
+            });
+            
+            // Combine routing config with provider info, description, and cost
+            const result = routingConfig?.map((row: any) => ({
+                ...row,
+                provider: providerMap.get(row.model_id) || 'openrouter', // Fallback to openrouter if not found
+                description: descriptionMap.get(row.model_id) || null, // Add description if available
+                approximate_cost: costMap.get(row.model_id) || null, // Add cost if available
+            })) || [];
+            
+            res.status(200).json(result);
         } catch (error: any) {
             console.error("Error fetching model routing:", error);
             res.status(500).json({ error: 'Failed to fetch model routing configuration', details: error.message });
@@ -465,8 +501,73 @@ async function main() {
         }
     });
 
-    // Create auth middleware with supabase client
-    const authenticateUser = createAuthMiddleware(supabase);
+    // GET endpoint to fetch a setting (public, no auth required)
+    app.get('/api/v1/settings/:key', async (req, res) => {
+        try {
+            const { key } = req.params;
+
+            if (!key || typeof key !== 'string') {
+                return res.status(400).json({ error: 'key is required and must be a string.' });
+            }
+
+            const { data, error } = await supabase
+                .from('settings')
+                .select('value')
+                .eq('key', key)
+                .single();
+
+            if (error && error.code === 'PGRST116') { // No rows returned
+                return res.status(404).json({ error: 'Setting not found', value: false });
+            }
+
+            if (error) throw error;
+
+            res.status(200).json({ value: data?.value ?? false });
+        } catch (error: any) {
+            console.error("Error fetching setting:", error);
+            res.status(500).json({ 
+                error: 'Failed to fetch setting', 
+                details: error.message || 'Unknown error',
+            });
+        }
+    });
+
+    // PUT endpoint to update or create a setting (public, no admin required)
+    app.put('/api/v1/settings/:key', async (req, res) => {
+        try {
+            const { key } = req.params;
+            const { value } = req.body;
+
+            console.log(`[SETTINGS] Attempting to update key="${key}" to value=${value}`);
+
+            if (!key || typeof key !== 'string') {
+                return res.status(400).json({ error: 'key is required and must be a string.' });
+            }
+
+            if (typeof value !== 'boolean') {
+                return res.status(400).json({ error: 'value must be a boolean.' });
+            }
+
+            const { error: upsertError, data: upsertData } = await supabase
+                .from('settings')
+                .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+
+            console.log(`[SETTINGS] Upsert result - Error: ${upsertError?.message || 'none'}, Data:`, upsertData);
+
+            if (upsertError) {
+                console.error("Error updating setting:", upsertError);
+                throw upsertError;
+            }
+
+            res.status(200).json({ message: 'Setting updated successfully', value });
+        } catch (error: any) {
+            console.error("Error updating setting:", error);
+            res.status(500).json({ 
+                error: 'Failed to update setting', 
+                details: error.message || 'Unknown error',
+            });
+        }
+    });
 
     // Admin endpoints - require authentication and admin role
     app.get('/api/v1/admin/users', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -545,7 +646,7 @@ async function main() {
     // Admin endpoint - Add model from OpenRouter
     app.post('/api/v1/admin/models', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
         try {
-            const { model_id, display_name, openrouter_model_id, temperature, is_default_access } = req.body;
+            const { model_id, display_name, openrouter_model_id, temperature, is_default_access, description } = req.body;
 
             // Validation
             if (!model_id || typeof model_id !== 'string') {
@@ -613,11 +714,113 @@ async function main() {
                 model_id: newModel.model_id,
                 display_name: newModel.display_name,
                 provider: newModel.provider,
+                description: description || null,
             });
         } catch (error: any) {
             console.error("Error adding model:", error);
             res.status(500).json({ 
                 error: 'Failed to add model', 
+                details: error.message || 'Unknown error',
+            });
+        }
+    });
+
+    // Admin endpoint - Delete model
+    app.delete('/api/v1/admin/models/:modelId', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+        try {
+            const { modelId } = req.params;
+
+            if (!modelId || typeof modelId !== 'string') {
+                return res.status(400).json({ error: 'modelId is required and must be a string.' });
+            }
+
+            // Delete from model_routing_config first
+            const { error: routingDeleteError } = await supabase
+                .from('model_routing_config')
+                .delete()
+                .eq('model_id', modelId);
+
+            if (routingDeleteError) {
+                console.error("Error deleting routing config:", routingDeleteError);
+                throw routingDeleteError;
+            }
+
+            // Delete from models table
+            const { error: modelDeleteError } = await supabase
+                .from('models')
+                .delete()
+                .eq('model_id', modelId);
+
+            if (modelDeleteError) {
+                console.error("Error deleting model:", modelDeleteError);
+                throw modelDeleteError;
+            }
+
+            res.status(200).json({ message: 'Model deleted successfully' });
+        } catch (error: any) {
+            console.error("Error deleting model:", error);
+            res.status(500).json({ 
+                error: 'Failed to delete model', 
+                details: error.message || 'Unknown error',
+            });
+        }
+    });
+
+    // PUT endpoint to update model description
+    app.put('/api/v1/admin/models/:modelId/description', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+        try {
+            const { modelId } = req.params;
+            const { description } = req.body;
+
+            if (!modelId || typeof modelId !== 'string') {
+                return res.status(400).json({ error: 'modelId is required and must be a string.' });
+            }
+
+            const { error: updateError } = await supabase
+                .from('models')
+                .update({ description: description || null })
+                .eq('model_id', modelId);
+
+            if (updateError) {
+                console.error("Error updating model description:", updateError);
+                throw updateError;
+            }
+
+            res.status(200).json({ message: 'Model description updated successfully' });
+        } catch (error: any) {
+            console.error("Error updating model description:", error);
+            res.status(500).json({ 
+                error: 'Failed to update model description', 
+                details: error.message || 'Unknown error',
+            });
+        }
+    });
+
+    // PUT endpoint to update model approximate cost
+    app.put('/api/v1/admin/models/:modelId/cost', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+        try {
+            const { modelId } = req.params;
+            const { approximate_cost } = req.body;
+
+            if (!modelId || typeof modelId !== 'string') {
+                return res.status(400).json({ error: 'modelId is required and must be a string.' });
+            }
+
+            const { error: updateError } = await supabase
+                .from('models')
+                .update({ approximate_cost: approximate_cost || null })
+                .eq('model_id', modelId);
+
+            if (updateError) {
+                console.error("Error updating model cost:", updateError);
+                throw updateError;
+            }
+
+            res.status(200).json({ message: 'Model cost updated successfully' });
+        } catch (error: any) {
+            console.error("Error updating model cost:", error);
+            res.status(500).json({ 
+                error: 'Failed to update model cost', 
                 details: error.message || 'Unknown error',
             });
         }

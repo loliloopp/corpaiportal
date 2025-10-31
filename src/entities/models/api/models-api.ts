@@ -154,8 +154,7 @@ export interface AddModelRequest {
     model_id: string;
     display_name: string;
     openrouter_model_id: string;
-    temperature?: number;
-    is_default_access?: boolean;
+    description?: string;
 }
 
 export interface AddModelResponse {
@@ -195,4 +194,165 @@ export const addModelFromOpenRouter = async (modelData: AddModelRequest): Promis
     }
 
     return response.json();
+};
+
+/**
+ * Delete a model and its routing config
+ */
+export const deleteModel = async (modelId: string): Promise<void> => {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !session) {
+        throw new Error('User not authenticated.');
+    }
+
+    const response = await fetch(`/api/v1/admin/models/${modelId}`, {
+        method: 'DELETE',
+        headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+        },
+    });
+
+    if (!response.ok) {
+        let errorData: { error?: string; details?: string } | undefined;
+        try {
+            errorData = await response.json();
+        } catch {
+            // Ignore JSON parse errors
+        }
+        throw new Error(errorData?.error || `Failed to delete model: ${response.statusText}`);
+    }
+};
+
+/**
+ * Get model descriptions from database with in-memory caching
+ * Returns a map: modelId -> description
+ */
+let descriptionsCache: Map<string, string | null> | null = null;
+let descriptionsCacheTime: number = 0;
+const DESCRIPTIONS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+export const getModelDescriptions = async (): Promise<Map<string, string | null>> => {
+    const now = Date.now();
+    
+    // Return cached descriptions if still valid
+    if (descriptionsCache && (now - descriptionsCacheTime) < DESCRIPTIONS_CACHE_DURATION) {
+        return descriptionsCache;
+    }
+    
+    try {
+        const { data: models, error } = await supabase
+            .from('models')
+            .select('model_id, description');
+        
+        if (error) throw error;
+        
+        const descMap = new Map<string, string | null>();
+        models?.forEach((model: any) => {
+            descMap.set(model.model_id, model.description || null);
+        });
+        
+        // Update cache
+        descriptionsCache = descMap;
+        descriptionsCacheTime = now;
+        
+        return descMap;
+    } catch (error) {
+        console.error('Error fetching model descriptions:', error);
+        // Return empty map on error instead of throwing
+        return new Map();
+    }
+};
+
+/**
+ * Get model costs from database with in-memory caching
+ * Returns a map: modelId -> approximate_cost
+ */
+let costsCache: Map<string, string | null> | null = null;
+let costsCacheTime: number = 0;
+const COSTS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+export const getModelCosts = async (): Promise<Map<string, string | null>> => {
+    const now = Date.now();
+    
+    // Return cached costs if still valid
+    if (costsCache && (now - costsCacheTime) < COSTS_CACHE_DURATION) {
+        return costsCache;
+    }
+    
+    try {
+        const { data: models, error } = await supabase
+            .from('models')
+            .select('model_id, approximate_cost');
+        
+        if (error) throw error;
+        
+        const costMap = new Map<string, string | null>();
+        models?.forEach((model: any) => {
+            costMap.set(model.model_id, model.approximate_cost || null);
+        });
+        
+        // Update cache
+        costsCache = costMap;
+        costsCacheTime = now;
+        
+        return costMap;
+    } catch (error) {
+        console.error('Error fetching model costs:', error);
+        // Return empty map on error instead of throwing
+        return new Map();
+    }
+};
+
+/**
+ * Get a boolean setting by key via proxy
+ */
+export const getSetting = async (key: string): Promise<boolean> => {
+    try {
+        const response = await fetch(`/api/v1/settings/${key}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        
+        if (response.status === 404) {
+            // Setting doesn't exist, return false (this is normal for first access)
+            return false;
+        }
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch setting: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        return data.value ?? false;
+    } catch (error) {
+        // Silently return false on error - 404 is expected and normal
+        return false;
+    }
+};
+
+/**
+ * Update or create a boolean setting via proxy
+ */
+export const setSetting = async (key: string, value: boolean): Promise<void> => {
+    try {
+        const response = await fetch(`/api/v1/settings/${key}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ value }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to save setting');
+        }
+    } catch (error) {
+        console.error('Error updating setting:', error);
+        throw error;
+    }
 };

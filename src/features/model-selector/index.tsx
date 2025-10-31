@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Select } from 'antd';
 import { MODELS, Model } from '@/shared/config/models.config';
+import { getModelDescriptions, getModelCosts, getSetting } from '@/entities/models/api/models-api';
 
 interface ModelSelectorProps {
   value: string;
@@ -19,9 +20,57 @@ const modelRecommendations: Record<string, string> = {
 };
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({ value, onChange, availableModels }) => {
+  const [descriptions, setDescriptions] = useState<Map<string, string | null>>(new Map());
+  const [costs, setCosts] = useState<Map<string, string | null>>(new Map());
+  const [showCost, setShowCost] = useState(false);
+
+  // Load descriptions and costs from cache on mount
+  useEffect(() => {
+    const loadData = async () => {
+      const descMap = await getModelDescriptions();
+      setDescriptions(descMap);
+      
+      const costMap = await getModelCosts();
+      setCosts(costMap);
+      
+      const showCostSetting = await getSetting('show_cost_in_selector');
+      setShowCost(showCostSetting);
+    };
+    loadData();
+  }, []);
+
   const sortedModels = useMemo(() => {
     return [...availableModels].sort((a, b) => a.name.localeCompare(b.name));
   }, [availableModels]);
+
+  // Get tooltip/description for a model from DB, fallback to hardcoded
+  const getModelDescription = (model: Model): string | undefined => {
+    // First check if description is in cache from DB
+    const dbDescription = descriptions.get(model.id);
+    if (dbDescription) {
+      return dbDescription;
+    }
+    // Then check if model has description field (from availableModels)
+    if (model.description) {
+      return model.description;
+    }
+    // Fallback to hardcoded recommendations for built-in models
+    return modelRecommendations[model.id];
+  };
+
+  // Get display label for model (with optional cost)
+  const getModelLabel = (model: Model): string => {
+    if (!showCost) {
+      return model.name;
+    }
+    
+    const cost = costs.get(model.id);
+    if (cost) {
+      return `${model.name} - ${cost}`;
+    }
+    
+    return model.name;
+  };
 
   return (
     <Select 
@@ -37,9 +86,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ value, onChange, a
         <Select.Option 
           key={model.id} 
           value={model.id}
-          title={modelRecommendations[model.id]}
+          title={getModelDescription(model)}
         >
-          {model.name}
+          {getModelLabel(model)}
         </Select.Option>
       ))}
     </Select>

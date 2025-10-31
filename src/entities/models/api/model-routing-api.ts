@@ -6,6 +6,9 @@ export interface ModelRoutingConfig {
     openrouter_model_id: string;
     created_at: string;
     updated_at: string;
+    provider?: string; // Provider from models table
+    description?: string | null; // Description from models table
+    approximate_cost?: string | null; // Approximate cost from models table
 }
 
 export const modelRoutingApi = {

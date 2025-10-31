@@ -183,6 +183,7 @@ export const UsersTab: React.FC = () => {
       dataIndex: 'email', 
       key: 'email', 
       width: '25%',
+      defaultSortOrder: 'ascend' as const,
       sorter: (a: UserProfile, b: UserProfile) => {
         const nameA = (a.display_name || a.email || '').toLowerCase();
         const nameB = (b.display_name || b.email || '').toLowerCase();
