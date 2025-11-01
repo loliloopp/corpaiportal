@@ -1,3 +1,42 @@
+# === Economy Mode: minimize tokens ===
+- Never include large, unrelated files in context.
+- Do not auto-include node_modules, build outputs, lockfiles, images, PDFs, or large JSON.
+- Prefer small, surgical patches over full-file rewrites.
+- Return only the minimal diff/patch. No explanations, no lists of changes.
+- Do not repeat user instructions or file contents unless explicitly asked.
+
+# File filtering
+ignore:
+  - node_modules/**
+  - .git/**
+  - dist/** .next/** build/** coverage/**
+  - **/*.lock
+  - **/*.map
+  - **/*.png **/*.jpg **/*.svg **/*.pdf
+  - **/*.csv **/*.xlsx
+  - **/fixtures/** **/snapshots/**
+
+# Context discipline
+context:
+  maxFiles: 3          # не более 3 файлов в запросе
+  maxBytesPerFile: 40k # жесткий лимит на размер
+  strategy: "manual"   # только ручной выбор файлов
+
+# Output policy
+output:
+  mode: "patch"        # всегда патч
+  explain: false
+  comments: false
+
+# Style for edits
+edits:
+  keep_formatting: true
+  minimal_changes: true
+
+# Tests
+tests:
+  scope: "touched"     # только для измененного кода
+
 ## Project Description
 Корпоративный AI-портал для сотрудников с контролем доступа, лимитами и статистикой.
 - **Цель**: Предоставить сотрудникам доступ к AI моделям с контролем использования и стоимости

@@ -2,43 +2,25 @@ import { Router } from 'express';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { requireAdmin } from '../../middleware/auth';
 import { z } from 'zod';
-
-const userUpdateSchema = z.object({
-    daily_request_limit: z.number().int().min(0).max(100000).optional(),
-    role: z.enum(['user', 'admin']).optional(),
-    display_name: z.string().optional(),
-    email: z.string().email().optional(),
-});
-
-const modelAddSchema = z.object({
-    model_id: z.string().min(1),
-    display_name: z.string().min(1),
-    openrouter_model_id: z.string().min(1),
-    temperature: z.number().min(0).max(2).optional(),
-    is_default_access: z.boolean().optional(),
-    description: z.string().optional(),
-});
+import { validate, userUpdateSchema, modelAddSchema } from '../../middleware/validation';
 
 export default (supabase: SupabaseClient) => {
     const router = Router();
     router.use(requireAdmin);
 
-    // USER MANAGEMENT
-    router.get('/admin/users', async (req, res) => {
+    // User management
+    router.get('/users', async (req, res) => {
         try {
-            const { data, error } = await supabase
-                .from('user_profiles')
-                .select('*')
-                .order('created_at', { ascending: false });
-
+            const { data: users, error } = await supabase.from('user_profiles').select('*');
             if (error) throw error;
-            res.status(200).json(data);
+            res.status(200).json(users);
         } catch (error: any) {
-            res.status(500).json({ error: 'Failed to fetch users', details: error.message });
+            req.log.error({ err: error }, 'Failed to get all users.');
+            res.status(500).json({ error: 'Failed to retrieve users', details: error.message });
         }
     });
 
-    router.put('/admin/users/:userId', async (req, res) => {
+    router.put('/users/:userId', validate(userUpdateSchema), async (req, res) => {
         try {
             const { userId } = req.params;
             const validation = userUpdateSchema.safeParse(req.body);
@@ -54,12 +36,13 @@ export default (supabase: SupabaseClient) => {
             if (error) throw error;
             res.status(200).json(data);
         } catch (error: any) {
+            req.log.error({ err: error, userId: req.params.userId }, 'Failed to update user.');
             res.status(500).json({ error: 'Failed to update user', details: error.message });
         }
     });
 
-    // MODEL MANAGEMENT
-    router.post('/admin/models', async (req, res) => {
+    // Model management
+    router.post('/models', async (req, res) => {
         try {
             const validation = modelAddSchema.safeParse(req.body);
             if (!validation.success) {
@@ -104,7 +87,7 @@ export default (supabase: SupabaseClient) => {
         }
     });
 
-    router.delete('/admin/models/:modelId', async (req, res) => {
+    router.delete('/models/:modelId', async (req, res) => {
         try {
             const { modelId } = req.params;
 
@@ -145,12 +128,13 @@ export default (supabase: SupabaseClient) => {
 
             res.status(200).json({ message: 'Model deleted successfully' });
         } catch (error: any) {
+            req.log.error({ err: error, modelId: req.params.modelId }, 'Failed to delete model.');
             res.status(500).json({ error: 'Failed to delete model', details: error.message });
         }
     });
 
     // Update model description
-    router.put('/admin/models/:modelId/description', async (req, res) => {
+    router.put('/models/:modelId/description', async (req, res) => {
         try {
             const { modelId } = req.params;
             const { description } = req.body;
@@ -175,12 +159,13 @@ export default (supabase: SupabaseClient) => {
 
             res.status(200).json(data);
         } catch (error: any) {
+            req.log.error({ err: error, modelId: req.params.modelId }, 'Failed to update model description.');
             res.status(500).json({ error: 'Failed to update model description', details: error.message });
         }
     });
 
     // Update model approximate cost
-    router.put('/admin/models/:modelId/cost', async (req, res) => {
+    router.put('/models/:modelId/cost', async (req, res) => {
         try {
             const { modelId } = req.params;
             const { approximate_cost } = req.body;
@@ -205,6 +190,7 @@ export default (supabase: SupabaseClient) => {
 
             res.status(200).json(data);
         } catch (error: any) {
+            req.log.error({ err: error, modelId: req.params.modelId }, 'Failed to update model cost.');
             res.status(500).json({ error: 'Failed to update model cost', details: error.message });
         }
     });

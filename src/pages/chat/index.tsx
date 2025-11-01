@@ -14,10 +14,9 @@ const ChatPage = () => {
     loading, 
     activeConversation, 
     setActiveConversation,
-    fetchAvailableModels,
-    fetchOpenRouterModels,
     fetchConversations,
     setErrorHandler,
+    fetchAvailableModels,
   } = useChatStore();
   const { conversationId } = useParams<{ conversationId: string }>();
   const { user } = useAuthStore();
@@ -89,11 +88,10 @@ const ChatPage = () => {
   // Load user data on mount
   useEffect(() => {
     if (user?.id) {
-      fetchAvailableModels(user.id);
       fetchConversations(user.id);
-      fetchOpenRouterModels();
+      fetchAvailableModels();
     }
-  }, [user?.id]);
+  }, [user?.id, fetchConversations, fetchAvailableModels]);
 
   // Wrapper around sendMessage that handles navigation for new conversations
   const handleSendMessage = async (message: string) => {

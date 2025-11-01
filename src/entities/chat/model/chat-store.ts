@@ -1,38 +1,42 @@
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { supabase } from '@/shared/lib/supabase';
 import { queryClient } from '@/app/providers';
 import { Message } from './types';
-import { getConversations, getMessages, createConversation, saveMessage } from '../api/chat-api';
+import {
+  createConversation,
+  deleteConversation,
+  getConversations,
+  getMessages,
+  sendAIRequestStreaming,
+  updateConversationTitle,
+} from '../api/chat-api';
 import { useAuthStore } from '@/features/auth';
-import { sendAIRequest, ChatMessage, ChatResponse, sendAIRequestStreaming } from '@/shared/api/proxy-api';
 import { APIError } from '@/shared/lib/error-handler';
-import { logUsage } from '@/entities/limits';
-import { Model, MODELS } from '@/shared/config/models.config';
-import { getModelsWithAccess, ModelWithAccess, getUserAccessibleModels, AccessibleModel } from '@/entities/models/api/models-api';
-import { openRouterApi, OpenRouterModel } from '@/entities/models/api/openrouter-api';
-import { usePromptsStore } from '@/entities/prompts';
 import { debounce } from '@/shared/utils/debounce';
+import { usePromptsStore } from '@/entities/prompts';
 
-type Conversation = {
-    id: string;
-    title: string;
-    created_at: string;
-}
+// Note: CachedResponse is not used anymore but kept for potential future use.
+export type CachedResponse = {
+  response: any; // Kept generic as the source is removed
+  timestamp: number;
+  params: {
+    model: string;
+    messagesHash: string;
+  };
+};
 
-interface CachedResponse {
-    response: ChatResponse;
-    timestamp: number;
-    params: {
-        model: string;
-        messagesHash: string;
-    };
+interface Model {
+  id: string;
+  name: string;
 }
 
 interface ChatState {
   conversations: Conversation[];
   messages: Message[];
   activeConversation: string | null;
-  selectedModel: string;
+  selectedModel: Model | null;
   availableModels: Model[];
   openRouterModels: Model[];
   loading: boolean;
@@ -42,410 +46,275 @@ interface ChatState {
   messagesCache: Map<string, Message[]>; // Cache for messages by conversationId
   fetchConversations: (userId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
-  fetchAvailableModels: (userId: string) => Promise<void>;
+  fetchAvailableModels: () => Promise<void>;
   fetchOpenRouterModels: () => Promise<void>;
   setActiveConversation: (conversationId: string | null) => void;
   setSelectedModel: (model: string) => void;
   setErrorHandler: (handler: ((error: { title: string; content: string }) => void) | null) => void;
   sendMessage: (content: string) => void;
+  setError: (title: string, content: string) => void;
 }
 
-export const useChatStore = create<ChatState>((set, get) => {
-  const initialActiveConversation = (() => {
-    try {
-      const item = localStorage.getItem('activeConversation');
-      return item ? JSON.parse(item) : null;
-    } catch (e) {
-      console.error('Failed to parse activeConversation from localStorage', e);
-      return null;
-    }
-  })();
-
-  const initialSelectedModel = (() => {
-    try {
-      return localStorage.getItem('selectedModel') || 'grok-4-fast';
-    } catch (e) {
-      console.error('Failed to get selectedModel from localStorage', e);
-      return 'grok-4-fast';
-    }
-  })();
-
-  // Helper function to generate hash for messages
-  const generateMessagesHash = (messages: ChatMessage[]): string => {
-    const messagesStr = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content })));
-    // Simple hash function
-    let hash = 0;
-    for (let i = 0; i < messagesStr.length; i++) {
-      const char = messagesStr.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return hash.toString();
-  };
-
-  // Helper function to load cache from localStorage
-  const loadCacheFromStorage = (conversationId: string): CachedResponse[] => {
-    try {
-      const cached = localStorage.getItem(`chat_cache_${conversationId}`);
-      if (cached) {
-        const parsed = JSON.parse(cached) as CachedResponse[];
-        const now = Date.now();
-        const TTL = 24 * 60 * 60 * 1000; // 24 hours
-        // Filter out expired entries
-        return parsed.filter(entry => (now - entry.timestamp) < TTL);
-      }
-    } catch (e) {
-      console.error('Error loading cache from storage:', e);
-    }
-    return [];
-  };
-
-  const debouncedSave = debounce((conversationId: string, cache: CachedResponse[]) => {
-      try {
-        const toSave = cache.slice(-19);
-        localStorage.setItem(`chat_cache_${conversationId}`, JSON.stringify(toSave));
-      } catch (e) {
-         console.error('Error saving cache to storage:', e);
-         // Here you could implement a more robust strategy, like clearing old cache
-      }
-  }, 1000);
-
-
-  // Helper function to save cache to localStorage (keep last 19, as last one is in memory)
-  const saveCacheToStorage = (conversationId: string, cache: CachedResponse[]) => {
-      debouncedSave(conversationId, cache);
-  };
-
-  return {
-    conversations: [],
-    messages: [],
-    activeConversation: initialActiveConversation,
-    selectedModel: initialSelectedModel,
-    availableModels: [],
-    openRouterModels: [],
-    loading: false,
-    onSendMessageStart: null,
-    onError: null,
-    lastResponse: null,
-    messagesCache: new Map<string, Message[]>(),
-    setErrorHandler: (handler) => set({ onError: handler }),
-    fetchConversations: async (userId: string) => {
-      set({ loading: true });
-      try {
-        const data = await getConversations(userId);
-        set({ conversations: data || [], loading: false });
-      } catch (error) {
-        set({ loading: false });
-      }
-    },
-    fetchMessages: async (conversationId: string) => {
-      // Check cache first - show cached messages immediately
-      const cached = get().messagesCache.get(conversationId);
-      if (cached && cached.length > 0) {
-        set({ messages: cached });
-      }
-
-      set({ loading: true });
-      try {
-        const data = await getMessages(conversationId);
-        const messages = data || [];
-        // Update cache and messages
-        const cache = new Map(get().messagesCache);
-        cache.set(conversationId, messages);
-        set({ messages, messagesCache: cache, loading: false });
-      } catch (error) {
-        console.error('Error fetching messages:', error);
-        set({ loading: false });
-        // Keep cached messages if available, don't clear them on error
-        if (!cached || cached.length === 0) {
-          set({ messages: [] });
-        }
-      }
-    },
-    fetchAvailableModels: async (userId: string) => {
-      try {
-        // Get models that the user has access to
-        const userModels: AccessibleModel[] = await getUserAccessibleModels(userId);
-          
-        set({ availableModels: userModels.map((m: AccessibleModel) => ({
-          id: m.id,
-          name: m.name,
-          provider: m.provider as Model['provider'],
-        })) });
-
-        // If the currently selected model is not in the available list, switch to the first available one
-        const currentModelStillAvailable = userModels.some((m: AccessibleModel) => m.id === get().selectedModel);
-        if (!currentModelStillAvailable && userModels.length > 0) {
-            set({ selectedModel: userModels[0].id });
-        }
-
-      } catch (error) {
-        console.error('Error fetching available models:', error);
-        set({ availableModels: [] });
-      }
-    },
-    fetchOpenRouterModels: async () => {
-      try {
-        const models = await openRouterApi.getModels();
-        
-        // Transform OpenRouter models to our Model format
-        const transformedModels: Model[] = models.map((m: OpenRouterModel) => ({
-          id: m.id,
-          name: m.name,
-          provider: 'openrouter' as const,
-          description: m.description,
-          context_length: m.context_length,
-          pricing: m.pricing ? {
-            prompt: parseFloat(m.pricing.prompt),
-            completion: parseFloat(m.pricing.completion),
-          } : undefined,
-        }));
-
-        set({ openRouterModels: transformedModels });
-
-      } catch (error) {
-        console.error('Error fetching OpenRouter models:', error);
-        set({ openRouterModels: [] });
-      }
-    },
-    setActiveConversation: (conversationId: string | null) => {
-      // Only clear messages if conversation is actually changing
-      const currentConversation = get().activeConversation;
-      if (currentConversation !== conversationId) {
-        set({ activeConversation: conversationId, messages: [] });
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set, get) => ({
+      conversations: [],
+      messages: [],
+      activeConversation: null,
+      selectedModel: null,
+      availableModels: [],
+      openRouterModels: [],
+      loading: false,
+      onSendMessageStart: null,
+      onError: null,
+      lastResponse: null,
+      messagesCache: new Map<string, Message[]>(),
+      setErrorHandler: (handler) => set({ onError: handler }),
+      fetchConversations: async (userId: string) => {
+        set({ loading: true });
         try {
-            localStorage.setItem('activeConversation', JSON.stringify(conversationId));
-        } catch(e) {
-            console.error("Failed to save active conversation to localStorage", e);
+          const data = await getConversations(userId);
+          set({ conversations: data || [], loading: false });
+        } catch (error) {
+          set({ loading: false });
         }
-        if (conversationId) {
-          get().fetchMessages(conversationId);
-        } else {
-          // Clear cache when switching to new chat
-          set({ messagesCache: new Map() });
+      },
+      fetchMessages: async (conversationId: string) => {
+        // Check cache first - show cached messages immediately
+        const cached = get().messagesCache.get(conversationId);
+        if (cached && cached.length > 0) {
+          set({ messages: cached });
         }
-      }
-    },
-    setSelectedModel: (model: string) => {
-      // Invalidate cache when model changes
-      set({ selectedModel: model, lastResponse: null });
-      try {
-        localStorage.setItem('selectedModel', model);
-      } catch (e) {
-        console.error("Failed to save selected model to localStorage", e);
-      }
-    },
-    sendMessage: async (content: string) => {
-      get().onSendMessageStart?.(); 
 
-      const { activeConversation, selectedModel, messages, lastResponse } = get();
-      const { user } = useAuthStore.getState();
-      const { selectedPrompt } = usePromptsStore.getState();
+        set({ loading: true });
+        try {
+          const data = await getMessages(conversationId);
+          const messages = data || [];
+          // Update cache and messages
+          const cache = new Map(get().messagesCache);
+          cache.set(conversationId, messages);
+          set({ messages, messagesCache: cache, loading: false });
+        } catch (error) {
+          console.error('Error fetching messages:', error);
+          set({ loading: false });
+          // Keep cached messages if available, don't clear them on error
+          if (!cached || cached.length === 0) {
+            set({ messages: [] });
+          }
+        }
+      },
+      setActiveConversation: (conversationId: string | null) => {
+        // Only clear messages if conversation is actually changing
+        const currentConversation = get().activeConversation;
+        if (currentConversation !== conversationId) {
+          set({ activeConversation: conversationId, messages: [] });
+          try {
+              localStorage.setItem('activeConversation', JSON.stringify(conversationId));
+          } catch(e) {
+              console.error("Failed to save active conversation to localStorage", e);
+          }
+          if (conversationId) {
+            get().fetchMessages(conversationId);
+          } else {
+            // Clear cache when switching to new chat
+            set({ messagesCache: new Map() });
+          }
+        }
+      },
+      setSelectedModel: (modelId: string) => {
+        const { availableModels } = get();
+        const modelToSet = availableModels.find(m => m.id === modelId);
+        if (modelToSet) {
+          set({ selectedModel: modelToSet, lastResponse: null });
+          try {
+            localStorage.setItem('selectedModel', JSON.stringify(modelToSet));
+          } catch (e) {
+            console.error("Failed to save selected model to localStorage", e);
+          }
+        }
+      },
+      fetchAvailableModels: async () => {
+        try {
+          const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+          
+          if (sessionError || !session?.access_token) {
+            console.error('Failed to get session for fetching models:', sessionError);
+            return;
+          }
 
-      if (!user) return;
-
-      set({ loading: true });
-
-      const optimisticUserMessage: Message = {
-        id: nanoid(),
-        conversation_id: activeConversation || 'optimistic-conv-id',
-        user_id: user.id,
-        role: 'user' as const,
-        content: content,
-        model: selectedModel,
-        created_at: new Date().toISOString(),
-      };
-      
-      // Add optimistic assistant message for streaming
-      const optimisticAssistantId = nanoid();
-      const optimisticAssistantMessage: Message = {
-        id: optimisticAssistantId,
-        conversation_id: activeConversation || 'optimistic-conv-id',
-        user_id: user.id,
-        role: 'assistant' as const,
-        content: '',
-        model: selectedModel,
-        created_at: new Date().toISOString(),
-      };
-      
-      set((state) => ({ 
-        messages: [...state.messages, optimisticUserMessage, optimisticAssistantMessage]
-      }));
-
-      try {
-        // Build conversation history with system message if prompt is selected
-        let conversationHistory: ChatMessage[] = [];
-        
-        // Add system prompt as first message if selected
-        if (selectedPrompt && selectedPrompt.system_prompt) {
-          conversationHistory.push({
-            role: 'system' as const,
-            content: selectedPrompt.system_prompt,
+          const response = await fetch('/api/v1/user-accessible-models', {
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
           });
+
+          if (!response.ok) {
+            throw new Error(`Failed to fetch models: ${response.statusText}`);
+          }
+
+          const models = await response.json();
+          console.log('Fetched user-accessible models:', models);
+          
+          if (models.length === 0) {
+            console.warn('No accessible models found. This might indicate DB/permission issue.');
+          }
+          
+          set({ availableModels: models });
+          if (!get().selectedModel && models.length > 0) {
+            set({ selectedModel: models[0] });
+          }
+        } catch (error) {
+          console.error('Error fetching available models:', error);
         }
-        
-        // Add conversation history
-        conversationHistory.push(...[...messages, optimisticUserMessage].map(msg => ({
-          role: msg.role,
-          content: msg.content,
-        })));
+      },
+      sendMessage: async (content: string) => {
+        get().onSendMessageStart?.(); 
 
-        // Generate hash for cache lookup
-        const messagesHash = generateMessagesHash(conversationHistory);
-        const cacheKey = `${selectedModel}_${messagesHash}`;
+        const { activeConversation, selectedModel, messages, lastResponse } = get();
+        const { user } = useAuthStore.getState();
+        const { selectedPrompt } = usePromptsStore.getState();
 
-        // Check cache (first in memory, then localStorage)
-        let cachedResponse: CachedResponse | undefined;
-        
-        // Check if last response matches
-        if (lastResponse && lastResponse.id === activeConversation) {
-          // This is approximate - in real scenario we'd need better matching
-          // For now, we'll always fetch fresh data but cache responses
-        }
+        if (!user) return;
 
-        // Check localStorage cache
-        if (activeConversation) {
-          const storageCache = loadCacheFromStorage(activeConversation);
-          cachedResponse = storageCache.find(c => c.params.messagesHash === messagesHash && c.params.model === selectedModel);
-        }
+        const activeConversationId = get().activeConversation;
+        const temperature = get().temperature;
+        const top_p = get().top_p;
 
-        let aiResponseData: ChatResponse;
-        
-        if (cachedResponse && (Date.now() - cachedResponse.timestamp) < 24 * 60 * 60 * 1000) {
-          // Use cached response
-          aiResponseData = cachedResponse.response;
-        } else {
-          // Prepare request parameters (only temperature and top_p, model and messages are passed separately)
-          const requestParams = {
-            temperature: selectedPrompt?.temperature,
-            top_p: selectedPrompt?.top_p,
-          };
+        set({ loading: true, error: null });
 
-          // Fetch from API with streaming
-          aiResponseData = await new Promise((resolve, reject) => {
-            let fullResponse: ChatResponse | null = null;
-            
-            sendAIRequestStreaming(
-              selectedModel,
-              conversationHistory,
-              activeConversation,
-              requestParams,
-              // onChunk: update the assistant message content in real-time
-              (chunk: string) => {
+        const optimisticUserMessage: Message = {
+          id: `user_${nanoid()}`,
+          role: 'user',
+          content: content,
+          createdAt: new Date().toISOString(),
+        };
+
+        const messagesToSend = [...get().messages, optimisticUserMessage];
+        const optimisticAssistantId = `asst_${nanoid()}`;
+
+        try {
+          if (!selectedModel) {
+            throw new Error('Модель не выбрана. Выберите модель перед отправкой сообщения.');
+          }
+
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) throw new Error('User not authenticated');
+
+          set(state => ({
+            messages: [...state.messages, optimisticUserMessage],
+          }));
+
+          await sendAIRequestStreaming(
+            messagesToSend,
+            selectedModel.id,
+            temperature,
+            top_p,
+            activeConversationId,
+            session.access_token,
+            (streamData) => {
+              if (streamData.type === 'chunk') {
                 set((state) => {
-                  // Find the assistant message (last one added after optimistic user message)
-                  const lastMessage = state.messages[state.messages.length - 1];
-                  if (lastMessage && lastMessage.role === 'assistant') {
+                  const existingMessage = state.messages.find(m => m.id === optimisticAssistantId);
+                  if (existingMessage) {
+                    return {
+                      messages: state.messages.map(m =>
+                        m.id === optimisticAssistantId
+                          ? { ...m, content: existingMessage.content + (streamData.content || '') }
+                          : m
+                      ),
+                    };
+                  } else {
                     return {
                       messages: [
-                        ...state.messages.slice(0, -1),
+                        ...state.messages,
                         {
-                          ...lastMessage,
-                          content: lastMessage.content + chunk,
+                          id: optimisticAssistantId,
+                          role: 'assistant',
+                          content: streamData.content || '',
+                          createdAt: new Date().toISOString(),
+                          model: selectedModel?.id || 'grok-4-fast', // Use optional chaining
                         },
                       ],
                     };
                   }
-                  return state;
                 });
-              },
-              // onComplete: resolve with full response
-              (response: ChatResponse) => {
-                fullResponse = response;
-                resolve(response);
-              },
-              // onError: reject with error
-              (error: Error) => {
-                reject(error);
+              } else if (streamData.type === 'done') {
+                set({ loading: false });
+                queryClient.invalidateQueries({ queryKey: ['usageStats', user?.id] });
+                // Potentially refetch messages to get final assistant message from DB
+              } else if (streamData.type === 'error') {
+                 const apiError = new APIError(streamData.error || 'Unknown stream error', 500, 'STREAM_ERROR', streamData.details);
+                 get().setError(apiError.title, apiError.message);
+                 set({ loading: false });
               }
-            );
-          });
+            }
+          );
 
-          // Save to cache
-          const cacheEntry: CachedResponse = {
-            response: aiResponseData,
-            timestamp: Date.now(),
-            params: {
-              model: selectedModel,
-              messagesHash,
-            },
-          };
+        } catch (error) {
+          // On error, remove both optimistic messages
+          set((state) => ({ 
+            messages: state.messages.filter(m => m.id !== optimisticUserMessage.id) 
+          }));
 
-          // Save last response in memory
-          set({ lastResponse: aiResponseData });
-
-          // Save to localStorage cache
-          if (activeConversation) {
-            const storageCache = loadCacheFromStorage(activeConversation);
-            storageCache.push(cacheEntry);
-            // Keep only last 20 entries (1 in memory + 19 in storage)
-            const trimmedCache = storageCache.slice(-19);
-            saveCacheToStorage(activeConversation, trimmedCache);
+          if (error instanceof APIError) {
+            get().setError(error.title, error.message);
+          } else if (error instanceof Error) {
+            get().setError('Ошибка', error.message);
+          } else {
+            get().setError('Неизвестная ошибка', 'Произошла непредвиденная ошибка');
           }
+          set({ loading: false });
         }
+      },
 
-        // If a new conversation was created, update the store and UI
-        if (!activeConversation && aiResponseData.id) {
-            get().setActiveConversation(aiResponseData.id);
-            get().fetchConversations(user.id);
-        }
-
-        // Refetch messages to get the real IDs and content from DB
-        await get().fetchMessages(get().activeConversation!);
-
-        // Invalidate usage stats queries so header counter updates immediately
-        queryClient.invalidateQueries({ queryKey: ['usageStats'] });
-        queryClient.invalidateQueries({ queryKey: ['currentUserSimpleStats'] });
-
-      } catch (error) {
-        console.error('Error in sendMessage:', error);
-        
-        // On error, remove both optimistic messages
-        set((state) => ({ 
-          messages: state.messages.filter(m => 
-            m.id !== optimisticUserMessage.id && m.id !== optimisticAssistantId
-          ) 
-        }));
-
-        let title = 'Ошибка запроса';
-        let content = 'Не удалось выполнить запрос. Попробуйте позже.';
-
-        if (error instanceof APIError) {
-          switch (error.code) {
-            case 'DAILY_LIMIT_EXCEEDED':
-              title = 'Дневной лимит превышен';
-              break;
-            case 'HOURLY_LIMIT_EXCEEDED':
-                title = 'Часовой лимит стоимости превышен';
-                break;
-            case 'STREAM_ERROR':
-                title = 'Ошибка получения ответа от модели';
-                break;
-            default:
-                title = 'Ошибка сервера';
-          }
-          content = error.message || content;
-          if (error.details) {
-              content += `\n\nДетали: ${error.details}`;
-          }
-        } else if (error instanceof Error) {
-          content = error.message || content;
-        }
-
+      setError: (title: string, content: string) => {
         const errorHandler = get().onError;
         if (errorHandler) {
           errorHandler({ title, content });
         } else {
           console.error(title, content);
         }
-        
-      } finally {
-          set({ loading: false });
-          queryClient.invalidateQueries({ queryKey: ['usageStats', user?.id] });
-      }
-    },
-  };
-});
+      },
+    }),
+    {
+      name: 'chat-storage',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        activeConversation: state.activeConversation,
+        selectedModel: state.selectedModel,
+        temperature: state.temperature,
+        top_p: state.top_p,
+      }),
+      onRehydrate: (persistedState, error) => {
+        if (error) {
+          console.error('Rehydration failed:', error);
+          return Promise.resolve(null);
+        }
+        if (persistedState) {
+          const selectedModel = persistedState.selectedModel;
+          if (selectedModel) {
+            // Attempt to parse the JSON string back into an object
+            try {
+              const parsedModel = JSON.parse(selectedModel);
+              // Check if the parsed object is an array and has at least one item
+              if (Array.isArray(parsedModel) && parsedModel.length > 0) {
+                // Assuming the first item is the model to set
+                set({ selectedModel: parsedModel[0] });
+              } else if (typeof parsedModel === 'object' && parsedModel !== null) {
+                // If it's a single object, set it directly
+                set({ selectedModel: parsedModel });
+              }
+            } catch (e) {
+              console.error('Failed to parse selectedModel from persisted state:', e);
+            }
+          }
+        }
+        return Promise.resolve(null);
+      },
+    }
+  )
+);
 
 // Add this function to check for the correct provider name, as it was missing in the Deepseek case
 function getSelectedAIModel(selectedModel: string): string {

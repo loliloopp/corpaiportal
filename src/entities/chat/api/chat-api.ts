@@ -1,4 +1,8 @@
 import { supabase } from '@/shared/lib/supabase';
+import { SSE } from 'sse.js';
+import { Message, StreamData } from '../model/types';
+import { APIError, parseAPIError } from '@/shared/lib/error-handler';
+
 
 export const getConversations = async (userId: string) => {
   const { data, error } = await supabase
@@ -112,3 +116,84 @@ export const saveMessage = async (message: {
 
     return data;
 }
+
+export const sendAIRequestStreaming = async (
+  messages: Message[],
+  selectedModelId: string,
+  temperature: number,
+  top_p: number,
+  conversationId: string | null,
+  jwt: string,
+  onNewData: (data: StreamData) => void
+): Promise<void> => {
+  const url = '/api/v1/chat/stream';
+  const requestBody = {
+    messages,
+    model: selectedModelId,
+    temperature,
+    top_p,
+    conversationId,
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${jwt}`,
+  };
+
+  const source = new SSE(url, {
+    headers,
+    payload: JSON.stringify(requestBody),
+    withCredentials: true,
+  });
+
+  const requestStartTime = Date.now();
+  const requestId = conversationId || `local-${Date.now()}`;
+  console.log(`[Request Start] ID: ${requestId}, Model: ${selectedModelId}`);
+  console.time(`Request Duration ${requestId}`);
+  let firstChunkReceived = false;
+
+  source.addEventListener('message', (e: any) => {
+    if (!firstChunkReceived) {
+      firstChunkReceived = true;
+      const ttfb = Date.now() - requestStartTime;
+      console.log(`[Request TTFB] ID: ${requestId}, First chunk received in ${ttfb}ms.`);
+      console.timeLog(`Request Duration ${requestId}`, 'First chunk received (TTFB)');
+    }
+
+    if (e.data === '[DONE]') {
+      source.close();
+      onNewData({ type: 'done' });
+      console.timeEnd(`Request Duration ${requestId}`);
+      return;
+    }
+
+    try {
+      const data = JSON.parse(e.data) as StreamData;
+      console.log(`[Stream Data] Type: ${data.type}, Content length: ${data.content?.length || 0}`);
+      onNewData(data);
+    } catch (error) {
+      console.error('Failed to parse stream data:', e.data, error);
+      onNewData({ type: 'error', error: 'Failed to parse stream data' });
+      source.close();
+      console.timeEnd(`Request Duration ${requestId}`);
+    }
+  });
+
+  source.addEventListener('error', async (e: any) => {
+    console.error('SSE error:', e);
+    let errorData: any = { error: 'A network error occurred' };
+    if(e.data) {
+        try {
+            errorData = JSON.parse(e.data);
+        } catch(err) {
+            errorData.details = e.data;
+        }
+    }
+    const apiError = await parseAPIError(errorData, source.xhr);
+    onNewData({ type: 'error', error: apiError.message, details: apiError.details });
+    source.close();
+    console.timeEnd(`Request Duration ${requestId}`);
+  });
+
+  source.stream();
+};

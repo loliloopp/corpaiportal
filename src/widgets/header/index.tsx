@@ -164,7 +164,7 @@ export const Header = () => {
         {isChatPage && (
           <div style={{ minWidth: 220 }}>
             <ModelSelector 
-              value={selectedModel} 
+              value={selectedModel?.id} 
               onChange={setSelectedModel} 
               availableModels={availableModels} 
             />

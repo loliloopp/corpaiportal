@@ -7,6 +7,8 @@ dotenv.config();
 import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
+import pinoHttp from 'pino-http';
+import { randomUUID } from 'crypto';
 
 // Configs
 import { CORS_OPTIONS } from './config/cors';
@@ -24,9 +26,10 @@ import settingsRoutes from './routes/v1/settings';
 
 // Services
 import ChatService from './services/chatService';
+import logger from './utils/logger';
 
 async function main() {
-    const port = process.env.PORT || 3000;
+    const port = process.env.PORT || 3001;
 
     // 1. Setup Supabase
     const supabaseUrl = process.env.SUPABASE_URL;
@@ -41,12 +44,49 @@ async function main() {
     // 2. Preload critical services
     const chatService = new ChatService(supabase);
     // Wait for critical data to load before starting the server
-    await chatService.loadModelRoutingConfig();
-    await chatService.fetchOpenRouterPricing();
-    console.log("Critical services preloaded.");
+    await chatService.loadModelRoutingConfig(logger);
+    await chatService.fetchOpenRouterPricing(logger);
+    logger.info('Critical services preloaded.');
 
     // 3. Create Express App
     const app = express();
+
+    // Setup Pino logger middleware
+    const pinoMiddleware = pinoHttp({
+        logger,
+        genReqId: function (req, res) {
+            const existingId = req.id ?? req.headers['x-request-id'];
+            if (existingId) return existingId;
+            const id = randomUUID();
+            res.setHeader('X-Request-Id', id);
+            return id;
+        },
+        customLogLevel: function (req, res, err) {
+            if (res.statusCode >= 400 && res.statusCode < 500) {
+                return 'warn';
+            } else if (res.statusCode >= 500 || err) {
+                return 'error';
+            }
+            return 'info';
+        },
+        serializers: {
+            req(req) {
+                return {
+                    id: req.id,
+                    method: req.method,
+                    url: req.url,
+                    ip: req.headers['x-real-ip'] || req.socket?.remoteAddress,
+                };
+            },
+            res(res) {
+                return {
+                    statusCode: res.statusCode,
+                };
+            },
+        },
+    });
+    app.use(pinoMiddleware);
+
     app.use(cors(CORS_OPTIONS));
     app.use(express.json({ limit: `${LIMITS.MAX_MESSAGE_SIZE_BYTES}b` }));
     app.use('/api', apiLimiter); // Apply general rate limiting to all /api requests
@@ -76,7 +116,7 @@ async function main() {
                 }
                 throw error;
             }
-
+            
             res.status(200).json(data);
         } catch (error: any) {
             console.error(`Error fetching setting '${settingName}':`, error);
@@ -94,9 +134,9 @@ async function main() {
     app.use('/api/v1', chatLimiter, chatRoutes(supabase, chatService));
 
     // Admin routes (require admin role)
-    app.use('/api/v1', adminRoutes(supabase));
+    app.use('/api/v1/admin', requireAdmin, adminRoutes(supabase));
 
-    console.log("Routes defined.");
+    logger.info('Routes defined.');
 
     // 5. Start Server
     app.listen(port, () => {

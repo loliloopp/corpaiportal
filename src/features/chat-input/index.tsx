@@ -15,8 +15,8 @@ export const ChatInputForm: React.FC<ChatInputFormProps> = ({ onSendMessage, loa
   const { theme } = useThemeContext();
   const isDark = theme === 'dark';
 
-  const handleFinish = (values: { message: string }) => {
-    if (values.message.trim()) {
+  const handleFinish = (values: { message?: string }) => {
+    if (values.message && values.message.trim()) {
       onSendMessage(values.message.trim());
       form.resetFields();
     }
