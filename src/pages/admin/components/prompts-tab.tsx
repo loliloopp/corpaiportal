@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Spin, message, Popconfirm, Checkbox } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Spin, message as messageStatic, Popconfirm, Checkbox, App } from 'antd';
 import { EditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getAllPrompts, createPrompt, updatePrompt, deletePrompt, Prompt } from '@/entities/prompts';
@@ -15,7 +15,7 @@ export const PromptsTab: React.FC = () => {
   const [savingPreprocessing, setSavingPreprocessing] = useState(false);
   const user = useAuthStore((state) => state.user);
   const queryClient = useQueryClient();
-  const { message: messageApi } = Modal;
+  const { message } = App.useApp();
   const { theme } = useThemeContext();
   const isDark = theme === 'dark';
 

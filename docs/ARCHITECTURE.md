@@ -177,6 +177,33 @@ OPENROUTER_API_KEY=sk-or-v1-...
 #### 6. `/api/v1/settings` (GET/PUT)
 Глобальные настройки портала (лимиты для новых пользователей)
 
+#### 7. `/api/v1/admin/users` (GET/PUT) - Require Admin Role
+Управление пользователями
+```javascript
+// GET /api/v1/admin/users
+// Returns: User profiles with roles and limits
+
+// PUT /api/v1/admin/users/:userId
+// Body: { daily_request_limit, role, display_name }
+```
+
+#### 8. `/api/v1/admin/models` (POST/DELETE) - Require Admin Role
+Управление моделями
+```javascript
+// POST /api/v1/admin/models
+// Body: { model_id, display_name, openrouter_model_id, temperature, is_default_access, description }
+// Inserts into: models + model_routing_config
+
+// DELETE /api/v1/admin/models/:modelId
+// Deletes from: model_routing_config → user_model_access → models
+
+// PUT /api/v1/admin/models/:modelId/description
+// Body: { description }
+
+// PUT /api/v1/admin/models/:modelId/cost
+// Body: { approximate_cost }
+```
+
 ### Логика маршрутизации
 
 ```
@@ -196,11 +223,55 @@ OPENROUTER_API_KEY=sk-or-v1-...
 
 ### Процесс инициализации
 
-1. Загрузка переменных окружения (.env)
+1. Загрузка переменных окружения (.env) — **FIRST**, перед всеми импортами
 2. Инициализация Supabase клиента (service_role)
-3. Загрузка конфигурации маршрутизации из БД
-4. Регистрация всех Express маршрутов
-5. Запуск сервера на порту 3001
+3. Предварительная загрузка критических данных:
+   - Конфигурация маршрутизации моделей (`loadModelRoutingConfig()`)
+   - Прайс-лист OpenRouter (`fetchOpenRouterPricing()`)
+4. Инициализация Express приложения с middleware:
+   - CORS конфигурация
+   - Body parser middleware (10MB лимит)
+   - General API rate limiter (100 req/15min per IP)
+5. Регистрация маршрутов в порядке:
+   - Публичные GET маршруты (models, settings)
+   - Middleware аутентификации
+   - Защищённые маршруты (chat, settings PUT)
+   - Admin маршруты (users, models management)
+6. Запуск сервера на порту 3001
+
+### Модульная структура Прокси-сервера
+
+```
+proxy/src/
+├── index.ts                    # Инициализация Express, маршруты
+├── config/
+│   ├── cors.ts                # CORS конфигурация
+│   ├── limits.ts              # Таймауты, размеры, лимиты
+│   └── aiProviders.ts         # Конфигурация AI провайдеров (OpenAI, Gemini и т.д.)
+├── middleware/
+│   ├── auth.ts                # JWT верификация (createAuthMiddleware, requireAdmin)
+│   ├── rateLimiter.ts         # IP-based rate limiting (apiLimiter, chatLimiter)
+│   └── validation.ts          # Zod schemas для входных данных
+├── services/
+│   ├── chatService.ts         # Business logic для chat эндпоинтов
+│   └── costLimiterService.ts  # Cost tracking и rate limiting по стоимости
+├── routes/v1/
+│   ├── chat.ts                # POST /chat/stream эндпоинт (с валидацией)
+│   ├── models.ts              # GET/PUT model routing эндпоинты
+│   ├── admin.ts               # Админ операции (users, models CRUD)
+│   └── settings.ts            # GET/PUT для глобальных настроек
+├── types/
+│   └── express.d.ts           # Express Request type extensions
+└── utils/                      # Утилиты (при необходимости)
+```
+
+**Ключевые принципы:**
+- Каждый файл < 500 строк кода
+- Конфигурация отделена в `config/`
+- Middleware в отдельных файлах
+- Services для бизнес-логики
+- Routes возвращают Router функции
+- Все импорты environment variables в начале `index.ts`
 
 ---
 
@@ -305,6 +376,38 @@ OPENROUTER_API_KEY=sk-or-v1-...
 - Таблицы доступны через Supabase REST API с RLS политиками
 - На прокси используется service_role для чтения конфигурации и логирования
 - Клиент использует ANON_KEY только для аутентификации
+
+### Rate Limiting & DoS Protection (Implemented)
+- **IP-Based Rate Limiting**: `express-rate-limit` middleware
+  - General API: 100 requests per 15 minutes per IP
+  - Chat endpoint: 20 requests per minute per IP
+- **Cost-Based Rate Limiting**: `CostLimiterService` class
+  - Отслеживает стоимость запросов в час
+  - Часовой лимит по умолчанию: $50
+  - Проверка выполняется перед отправкой запроса к AI провайдеру
+
+### Input Validation (Implemented)
+- **Request Validation**: Zod schemas для всех API эндпоинтов
+  - Все POST/PUT/DELETE запросы валидируются перед обработкой
+  - Возвращает 400 Bad Request при ошибке валидации
+- **Response Validation**: Zod schemas для ответов от AI провайдеров
+  - `openAIResponseSchema` — для OpenAI-совместимых API
+  - `geminiResponseSchema` — для Google Gemini
+
+### Streaming Security (Implemented)
+- **Stream Timeout**: 300 секунд для предотвращения зависаний
+- **Error Handling**: Try-catch блоки в обработчиках событий потока
+- **Connection Monitoring**: Timeout сбрасывается при каждом пакете данных
+
+### Authentication Middleware (Implemented)
+- **createAuthMiddleware**: Проверяет JWT токен перед доступом к защищенным эндпоинтам
+- **requireAdmin**: Дополнительная проверка роли администратора
+- **Bearer Token**: Заголовок `Authorization: Bearer <token>` обязателен
+
+### Secrets Management
+- **SUPABASE_SERVICE_ROLE_KEY** хранится ТОЛЬКО в `proxy/.env`, никогда в коде
+- **AI Provider Keys** (OpenAI, Gemini, DeepSeek, Grok, OpenRouter) на сервере
+- Переменные окружения не передаются в браузер
 
 ---
 

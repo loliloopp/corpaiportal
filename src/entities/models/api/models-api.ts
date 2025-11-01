@@ -347,10 +347,17 @@ export const getSetting = async (key: string): Promise<boolean> => {
  */
 export const setSetting = async (key: string, value: boolean): Promise<void> => {
     try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+        if (sessionError || !session) {
+            throw new Error('User not authenticated. Missing authentication token.');
+        }
+
         const response = await fetch(`/api/v1/settings/${key}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
             },
             body: JSON.stringify({ value }),
         });

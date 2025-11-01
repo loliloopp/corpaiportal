@@ -34,6 +34,51 @@
 - **Environment Variables**: ТОЛЬКО `.env.local` файлы
 - **Стиль общения**: Писать только по делу, без лишних слов.
 
+## Security Features (Implemented)
+
+### Authentication & Authorization
+- **JWT Verification**: Все запросы к `/api/v1/*` требуют Bearer JWT токен
+- **Role-Based Access Control**: Middleware `requireAdmin` для защиты админ-операций
+- **User Authentication**: Middleware `createAuthMiddleware` проверяет JWT через Supabase
+- **Request Authentication**: Заголовок `Authorization: Bearer <token>` обязателен
+
+### Rate Limiting & DoS Protection
+- **IP-Based Rate Limiting**: `express-rate-limit` middleware:
+  - General API: 100 requests per 15 minutes per IP
+  - Chat endpoint: 20 requests per minute per IP
+- **Cost-Based Rate Limiting**: `CostLimiterService` отслеживает расходы:
+  - Часовой лимит по стоимости ($50/час по умолчанию)
+  - Проверка перед отправкой запроса к AI провайдеру
+  - Блокировка при превышении лимита
+
+### Input Validation
+- **Request Body Validation**: Zod schemas для всех эндпоинтов:
+  - `chatRequestSchema` для chat запросов
+  - `userUpdateSchema` для обновления пользователей
+  - `modelAddSchema` для добавления моделей
+  - `settingsSchema` для глобальных настроек
+- **Strict Type Checking**: Все валидации возвращают 400 Bad Request при ошибке
+
+### AI Provider Response Validation
+- **Zod Response Schemas**:
+  - `openAIResponseSchema` для OpenAI/совместимых API
+  - `geminiResponseSchema` для Google Gemini
+- **Graceful Degradation**: Неизвестные поля в ответе игнорируются
+
+### Streaming Protection
+- **Stream Timeout**: 300 секунд для долгоживущих SSE соединений
+- **Error Handling in Streams**: Try-catch в обработчиках `on('data')`, `on('end')`, `on('error')`
+- **Connection Monitoring**: Reset timeout при каждом пакете данных
+
+### Server-Side Security
+- **No Client-Side Secrets**: `SUPABASE_SERVICE_ROLE_KEY` ТОЛЬКО на сервере (proxy/.env)
+- **Secure Environment Variables**: Все sensitive данные в `.env` файлах, не в коде
+- **API Key Management**: Корпоративные API ключи хранятся на сервере
+
+### Data Protection
+- **Transaction Safety**: Операции DELETE с проверкой существования и каскадным удалением
+- **Error Details Hiding**: Детали ошибок не возвращаются клиенту (логируются на сервере)
+
 ## Database Migrations
 - **GRANT права**: При создании новых таблиц ВСЕГДА добавлять GRANT для `service_role`:
   ```sql

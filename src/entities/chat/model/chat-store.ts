@@ -11,6 +11,7 @@ import { Model, MODELS } from '@/shared/config/models.config';
 import { getModelsWithAccess, ModelWithAccess, getUserAccessibleModels, AccessibleModel } from '@/entities/models/api/models-api';
 import { openRouterApi, OpenRouterModel } from '@/entities/models/api/openrouter-api';
 import { usePromptsStore } from '@/entities/prompts';
+import { debounce } from '@/shared/utils/debounce';
 
 type Conversation = {
     id: string;
@@ -50,8 +51,24 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
-  const initialActiveConversation = localStorage.getItem('activeConversation');
-  const initialSelectedModel = localStorage.getItem('selectedModel');
+  const initialActiveConversation = (() => {
+    try {
+      const item = localStorage.getItem('activeConversation');
+      return item ? JSON.parse(item) : null;
+    } catch (e) {
+      console.error('Failed to parse activeConversation from localStorage', e);
+      return null;
+    }
+  })();
+
+  const initialSelectedModel = (() => {
+    try {
+      return localStorage.getItem('selectedModel') || 'grok-4-fast';
+    } catch (e) {
+      console.error('Failed to get selectedModel from localStorage', e);
+      return 'grok-4-fast';
+    }
+  })();
 
   // Helper function to generate hash for messages
   const generateMessagesHash = (messages: ChatMessage[]): string => {
@@ -83,22 +100,27 @@ export const useChatStore = create<ChatState>((set, get) => {
     return [];
   };
 
+  const debouncedSave = debounce((conversationId: string, cache: CachedResponse[]) => {
+      try {
+        const toSave = cache.slice(-19);
+        localStorage.setItem(`chat_cache_${conversationId}`, JSON.stringify(toSave));
+      } catch (e) {
+         console.error('Error saving cache to storage:', e);
+         // Here you could implement a more robust strategy, like clearing old cache
+      }
+  }, 1000);
+
+
   // Helper function to save cache to localStorage (keep last 19, as last one is in memory)
   const saveCacheToStorage = (conversationId: string, cache: CachedResponse[]) => {
-    try {
-      // Keep only last 19 entries (last one is in memory)
-      const toSave = cache.slice(-19);
-      localStorage.setItem(`chat_cache_${conversationId}`, JSON.stringify(toSave));
-    } catch (e) {
-      console.error('Error saving cache to storage:', e);
-    }
+      debouncedSave(conversationId, cache);
   };
 
   return {
     conversations: [],
     messages: [],
-    activeConversation: initialActiveConversation ? JSON.parse(initialActiveConversation) : null,
-    selectedModel: initialSelectedModel || 'grok-4-fast',
+    activeConversation: initialActiveConversation,
+    selectedModel: initialSelectedModel,
     availableModels: [],
     openRouterModels: [],
     loading: false,
@@ -191,7 +213,11 @@ export const useChatStore = create<ChatState>((set, get) => {
       const currentConversation = get().activeConversation;
       if (currentConversation !== conversationId) {
         set({ activeConversation: conversationId, messages: [] });
-        localStorage.setItem('activeConversation', JSON.stringify(conversationId));
+        try {
+            localStorage.setItem('activeConversation', JSON.stringify(conversationId));
+        } catch(e) {
+            console.error("Failed to save active conversation to localStorage", e);
+        }
         if (conversationId) {
           get().fetchMessages(conversationId);
         } else {
@@ -203,7 +229,11 @@ export const useChatStore = create<ChatState>((set, get) => {
     setSelectedModel: (model: string) => {
       // Invalidate cache when model changes
       set({ selectedModel: model, lastResponse: null });
-      localStorage.setItem('selectedModel', model);
+      try {
+        localStorage.setItem('selectedModel', model);
+      } catch (e) {
+        console.error("Failed to save selected model to localStorage", e);
+      }
     },
     sendMessage: async (content: string) => {
       get().onSendMessageStart?.(); 
@@ -377,19 +407,31 @@ export const useChatStore = create<ChatState>((set, get) => {
           ) 
         }));
 
-        // Handle error with proper typing
         let title = 'Ошибка запроса';
         let content = 'Не удалось выполнить запрос. Попробуйте позже.';
 
         if (error instanceof APIError) {
-          const isRateLimit = error.status === 429 || error.code === 'DAILY_LIMIT_EXCEEDED';
-          title = isRateLimit ? 'Лимит запросов превышен' : 'Ошибка запроса';
+          switch (error.code) {
+            case 'DAILY_LIMIT_EXCEEDED':
+              title = 'Дневной лимит превышен';
+              break;
+            case 'HOURLY_LIMIT_EXCEEDED':
+                title = 'Часовой лимит стоимости превышен';
+                break;
+            case 'STREAM_ERROR':
+                title = 'Ошибка получения ответа от модели';
+                break;
+            default:
+                title = 'Ошибка сервера';
+          }
           content = error.message || content;
+          if (error.details) {
+              content += `\n\nДетали: ${error.details}`;
+          }
         } else if (error instanceof Error) {
           content = error.message || content;
         }
 
-        // Use callback if available, otherwise fallback to console
         const errorHandler = get().onError;
         if (errorHandler) {
           errorHandler({ title, content });

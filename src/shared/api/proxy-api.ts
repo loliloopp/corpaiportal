@@ -128,7 +128,7 @@ export const sendAIRequestStreaming = async (
         model,
         messages,
         jwt: session.access_token,
-        conversationId,
+        conversationId: conversationId || null,
     };
 
     // Add optional parameters if provided and not null
@@ -177,6 +177,7 @@ export const sendAIRequestStreaming = async (
         let fullContent = '';
         let messageId = '';
         let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+        let errorPayload: { error: string, details?: string } | null = null;
 
         try {
             while (true) {
@@ -193,7 +194,11 @@ export const sendAIRequestStreaming = async (
                         try {
                             const parsed = JSON.parse(data);
                             
-                            if (parsed.type === 'content') {
+                            if (parsed.type === 'error') {
+                                errorPayload = { error: parsed.error, details: parsed.details };
+                                // Stop reading the stream on first error
+                                break;
+                            } else if (parsed.type === 'content') {
                                 fullContent += parsed.content;
                                 actualOnChunk(parsed.content);
                             } else if (parsed.type === 'complete') {
@@ -205,6 +210,12 @@ export const sendAIRequestStreaming = async (
                         }
                     }
                 }
+                // If an error was found, exit the loop
+                if (errorPayload) break;
+            }
+            
+            if (errorPayload) {
+                throw new APIError(errorPayload.error, response.status, 'STREAM_ERROR', errorPayload.details);
             }
 
             // Call onComplete with the final response
@@ -221,7 +232,9 @@ export const sendAIRequestStreaming = async (
                 usage,
             });
         } catch (error) {
-            if (error instanceof Error) {
+             if (error instanceof APIError) {
+                actualOnError(error);
+            } else if (error instanceof Error) {
                 actualOnError(new NetworkError(error.message, error));
             } else {
                 actualOnError(new NetworkError('Streaming failed'));
