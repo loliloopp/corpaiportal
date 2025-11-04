@@ -3,6 +3,7 @@ import { Response } from 'express';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { z } from 'zod';
 import pino from 'pino';
+import { encodingForModel } from 'js-tiktoken';
 import { getProviderConfig } from '../config/aiProviders';
 import { LIMITS } from '../config/limits';
 import { ChatRequest, ModelRoutingItem, OpenAIResponse } from '../types/main';
@@ -57,13 +58,24 @@ class ChatService {
       log?.warn('Pricing data not available for cost calculation.');
       return null;
     }
-    const modelInfo = this.pricingCache.data.find((m: any) => m.id === model);
-    if (!modelInfo || !modelInfo.pricing) {
-      log?.warn({ model }, 'Pricing info not found for model');
+    
+    const routeConfig = this.modelRoutingConfig.get(model);
+    if (!routeConfig?.use_openrouter || !routeConfig.openrouter_model_id) {
+      log?.debug({ model }, 'Model does not use OpenRouter, cost calculation skipped.');
       return null;
     }
-    const cost = (promptTokens / 1000000) * parseFloat(modelInfo.pricing.input) + (completionTokens / 1000000) * parseFloat(modelInfo.pricing.output);
-    return parseFloat(cost.toFixed(8));
+    
+    const openRouterModelId = routeConfig.openrouter_model_id;
+    const modelInfo = this.pricingCache.data.find((m: any) => m.id === openRouterModelId);
+    
+    if (!modelInfo || !modelInfo.pricing) {
+      log?.warn({ model, openRouterModelId }, 'Pricing info not found for OpenRouter model.');
+      return null;
+    }
+    
+    const cost = (promptTokens * parseFloat(modelInfo.pricing.prompt)) + (completionTokens * parseFloat(modelInfo.pricing.completion));
+    log?.info({ model, openRouterModelId, promptTokens, completionTokens, cost, promptPrice: modelInfo.pricing.prompt, completionPrice: modelInfo.pricing.completion }, 'Cost calculated');
+    return parseFloat(cost.toFixed(6));
   }
 
   public async handleStreamRequest(
@@ -146,6 +158,7 @@ class ChatService {
       let completionTokens = 0;
       let promptTokens = 0;
       let lastChunkTime = Date.now();
+      let fullResponseContent = '';
 
       resetTimeout();
 
@@ -168,8 +181,16 @@ class ChatService {
               log.debug({ chunk: jsonContent }, 'Raw chunk from provider');
               const parsed = this.parseProviderResponse(jsonContent, providerConfig.provider, log);
               if (parsed) {
-                if (parsed.promptTokens) promptTokens = parsed.promptTokens;
-                if (parsed.completionTokens) completionTokens += 1; 
+                if (parsed.content) {
+                  fullResponseContent += parsed.content;
+                }
+                if (parsed.promptTokens) {
+                  promptTokens = parsed.promptTokens;
+                }
+                if (parsed.completionTokens) {
+                  completionTokens = parsed.completionTokens;
+                }
+                log.debug({ parsed }, 'Parsed chunk from provider');
                 res.write(`data: ${JSON.stringify({ type: 'chunk', content: parsed.content || '' })}\n\n`);
               }
             } catch (e) {
@@ -183,14 +204,95 @@ class ChatService {
       providerResponse.data.on('end', async () => {
         log.info('Provider stream ended.');
         clearTimeout(streamTimeout);
-        if (!res.writableEnded) {
-          const cost = this.calculateCost(providerConfig.modelId, promptTokens, completionTokens, log);
+        if (res.writableEnded) {
+          return;
+        }
+
+        const userMessage = messages[messages.length - 1];
+        let conversationId = body.conversationId;
+
+        try {
+          // 1. Create a new conversation if it's a new chat
+          if (!conversationId) {
+            const { data: convData, error: convError } = await this.supabase
+              .from('conversations')
+              .insert({
+                user_id: userId,
+                title: userMessage.content.substring(0, 100),
+              })
+              .select('id')
+              .single();
+
+            if (convError) throw convError;
+            conversationId = convData.id;
+            log.info({ conversationId }, 'New conversation created.');
+          }
+
+          // 2. Save user message
+          const { error: userMessageError } = await this.supabase.from('messages').insert({
+            conversation_id: conversationId,
+            user_id: userId,
+            role: 'user',
+            content: userMessage.content,
+            model: model,
+          });
+          if (userMessageError) throw new Error(`Failed to save user message: ${userMessageError.message}`);
+
+          // 3. Save assistant message and get its ID
+          const { data: assistantMessageData, error: assistantMessageError } = await this.supabase
+            .from('messages')
+            .insert({
+              conversation_id: conversationId,
+              user_id: userId,
+              role: 'assistant',
+              content: fullResponseContent,
+              model: model,
+            })
+            .select('id')
+            .single();
+
+          if (assistantMessageError) throw new Error(`Failed to save assistant message: ${assistantMessageError.message}`);
+          const assistantMessageId = assistantMessageData?.id;
+
+          // 4. Calculate cost and log usage
+          // If provider didn't send token counts, estimate from text
+          let finalPromptTokens = promptTokens || 0;
+          let finalCompletionTokens = completionTokens || 0;
+          
+          if (finalPromptTokens === 0) {
+            const userMsg = messages[messages.length - 1];
+            finalPromptTokens = this.countTokens(userMsg.content, model, log);
+          }
+          
+          if (finalCompletionTokens === 0) {
+            finalCompletionTokens = this.countTokens(fullResponseContent, model, log);
+          }
+          
+          const cost = this.calculateCost(model, finalPromptTokens, finalCompletionTokens, log);
           if (cost !== null) {
             this.costLimiterService.addCost(cost);
             log.info({ cost, totalHourlyCost: this.costLimiterService.getCurrentCost() }, 'Cost calculated and added.');
           }
-          // Log usage to DB
-          res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+          
+          log.info({ finalPromptTokens, finalCompletionTokens, totalTokens: finalPromptTokens + finalCompletionTokens }, 'Token counts before usage log insert.');
+          
+          const { error: usageLogError } = await this.supabase.from('usage_logs').insert({
+            user_id: userId,
+            model: model,
+            prompt_tokens: finalPromptTokens || null,
+            completion_tokens: finalCompletionTokens || null,
+            total_tokens: (finalPromptTokens + finalCompletionTokens) || null,
+            cost: cost,
+            status: 'success',
+            message_id: assistantMessageId,
+          });
+          if (usageLogError) throw new Error(`Failed to insert usage log: ${usageLogError.message}`);
+
+          log.info({ conversationId, userId }, 'Successfully saved messages and usage log.');
+        } catch (dbError: any) {
+          log.error({ err: dbError }, 'Database error while saving chat data.');
+        } finally {
+          res.write(`data: ${JSON.stringify({ type: 'done', conversationId })}\n\n`);
           res.end();
         }
       });
@@ -232,6 +334,8 @@ class ChatService {
     }
     const data = validation.data;
     if ('choices' in data) {
+      log.info({ fullChunk: JSON.stringify(data) }, 'Full provider chunk');
+      log.info({ usage: data.usage, promptTokens: data.usage?.prompt_tokens, completionTokens: data.usage?.completion_tokens }, 'Provider response usage field');
       return {
         content: data.choices[0].delta?.content || '',
         promptTokens: data.usage?.prompt_tokens,
@@ -239,6 +343,17 @@ class ChatService {
       };
     } else {
       return { content: data.candidates[0].content.parts[0].text || '' };
+    }
+  }
+
+  private countTokens(text: string, model: string, log?: pino.Logger): number {
+    try {
+      const enc = encodingForModel('gpt-3.5-turbo');
+      const tokens = enc.encode(text);
+      return tokens.length;
+    } catch (error) {
+      log?.debug({ error }, 'Failed to count tokens, using fallback estimation.');
+      return Math.ceil(text.length / 4);
     }
   }
 }

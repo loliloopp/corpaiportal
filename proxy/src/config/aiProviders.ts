@@ -28,13 +28,15 @@ export function getProviderConfig(
 ): ProviderConfig | null {
   const route = modelRoutingConfig.get(model);
 
-  if (route && route.use_openrouter && OPENROUTER_CONFIG.apiKey) {
+  // Priority 1: Use OpenRouter if specified in routing config and both key and model ID are available
+  if (route && route.use_openrouter && OPENROUTER_CONFIG.apiKey && route.openrouter_model_id) {
     return {
       ...OPENROUTER_CONFIG,
-      modelId: route.openrouter_model_id || model,
+      modelId: route.openrouter_model_id,
     };
   }
 
+  // Priority 2: Use a direct provider if it's explicitly configured
   const directProvider = AI_PROVIDERS_CONFIG[model];
   if (directProvider && directProvider.apiKey) {
     return {
@@ -43,7 +45,7 @@ export function getProviderConfig(
     };
   }
   
-  // Fallback to OpenRouter if no direct provider and OpenRouter is available
+  // Fallback to OpenRouter if no specific route or direct provider is set
   if (OPENROUTER_CONFIG.apiKey) {
     return {
         ...OPENROUTER_CONFIG,

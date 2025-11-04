@@ -4,10 +4,13 @@ import { LIMITS } from '../config/limits';
 
 export const validate = (schema: ZodSchema<any>) => (req: Request, res: Response, next: NextFunction) => {
     try {
+        console.log('[VALIDATION] Incoming body:', JSON.stringify(req.body));
         schema.parse(req.body);
         next();
     } catch (error) {
+        console.log('[VALIDATION ERROR]', error);
         if (error instanceof z.ZodError) {
+            console.log('[ZOD ERROR] Field errors:', error.flatten().fieldErrors);
             return res.status(400).json({
                 error: 'Invalid request body',
                 details: error.flatten().fieldErrors,

@@ -170,16 +170,15 @@ export const useChatStore = create<ChatState>()(
       },
       sendMessage: async (content: string) => {
         get().onSendMessageStart?.(); 
-
-        const { activeConversation, selectedModel, messages, lastResponse } = get();
+        const { activeConversation, selectedModel, messages } = get();
         const { user } = useAuthStore.getState();
         const { selectedPrompt } = usePromptsStore.getState();
 
-        if (!user) return;
+        if (!user || !selectedModel) return;
 
         const activeConversationId = get().activeConversation;
-        const temperature = get().temperature;
-        const top_p = get().top_p;
+        const temperature = selectedPrompt?.params?.temperature ?? get().temperature;
+        const top_p = selectedPrompt?.params?.top_p ?? get().top_p;
 
         set({ loading: true, error: null });
 
@@ -190,7 +189,18 @@ export const useChatStore = create<ChatState>()(
           createdAt: new Date().toISOString(),
         };
 
-        const messagesToSend = [...get().messages, optimisticUserMessage];
+        const messagesWithUser = [...get().messages, optimisticUserMessage];
+        
+        let messagesToSend: Omit<Message, 'id' | 'createdAt'>[] = messagesWithUser.map(({ id, createdAt, ...rest }) => rest);
+
+        if (selectedPrompt?.content) {
+          const systemMessage: Omit<Message, 'id' | 'createdAt'> = {
+            role: 'system',
+            content: selectedPrompt.content,
+          };
+          messagesToSend.unshift(systemMessage);
+        }
+
         const optimisticAssistantId = `asst_${nanoid()}`;
 
         try {
@@ -241,6 +251,10 @@ export const useChatStore = create<ChatState>()(
                 });
               } else if (streamData.type === 'done') {
                 set({ loading: false });
+                if (streamData.conversationId && !activeConversation) {
+                  set({ activeConversation: streamData.conversationId });
+                  get().fetchConversations(user.id);
+                }
                 queryClient.invalidateQueries({ queryKey: ['usageStats', user?.id] });
                 // Potentially refetch messages to get final assistant message from DB
               } else if (streamData.type === 'error') {

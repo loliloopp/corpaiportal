@@ -126,7 +126,7 @@ export const sendAIRequestStreaming = async (
   jwt: string,
   onNewData: (data: StreamData) => void
 ): Promise<void> => {
-  const url = '/api/v1/chat/stream';
+  const url = 'http://localhost:3001/api/v1/chat/stream';
   const requestBody = {
     messages,
     model: selectedModelId,
@@ -160,17 +160,16 @@ export const sendAIRequestStreaming = async (
       console.timeLog(`Request Duration ${requestId}`, 'First chunk received (TTFB)');
     }
 
-    if (e.data === '[DONE]') {
-      source.close();
-      onNewData({ type: 'done' });
-      console.timeEnd(`Request Duration ${requestId}`);
-      return;
-    }
-
     try {
       const data = JSON.parse(e.data) as StreamData;
-      console.log(`[Stream Data] Type: ${data.type}, Content length: ${data.content?.length || 0}`);
+      console.log(`[Stream Data] Type: ${data.type}, Content length: ${data.type === 'chunk' ? data.content?.length : 0}`);
+      
       onNewData(data);
+
+      if (data.type === 'done' || data.type === 'error') {
+        source.close();
+        console.timeEnd(`Request Duration ${requestId}`);
+      }
     } catch (error) {
       console.error('Failed to parse stream data:', e.data, error);
       onNewData({ type: 'error', error: 'Failed to parse stream data' });

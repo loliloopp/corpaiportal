@@ -25,6 +25,8 @@ export default (supabase: SupabaseClient, chatService: ChatService) => {
             return res.status(401).json({ error: 'User not authenticated' });
         }
 
+        req.log.info({ receivedBody: JSON.stringify(req.body) }, 'Raw incoming request body');
+        req.log.info({ parsedBody: req.body }, 'Parsed incoming chat/stream request body');
         try {
             await chatService.handleStreamRequest(req.user.id, req.body, res, req.log);
         } catch (error: any) {

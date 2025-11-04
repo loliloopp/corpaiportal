@@ -89,6 +89,16 @@ async function main() {
 
     app.use(cors(CORS_OPTIONS));
     app.use(express.json({ limit: `${LIMITS.MAX_MESSAGE_SIZE_BYTES}b` }));
+    
+    // Debug middleware - log all requests
+    app.use((req, res, next) => {
+        if (req.method === 'POST') {
+            console.log(`[DEBUG] ${req.method} ${req.path}`);
+            console.log(`[DEBUG] Body:`, JSON.stringify(req.body).substring(0, 500));
+        }
+        next();
+    });
+    
     app.use('/api', apiLimiter); // Apply general rate limiting to all /api requests
 
     // Create auth middleware instance
