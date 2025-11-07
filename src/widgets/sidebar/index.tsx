@@ -25,7 +25,9 @@ export const Sidebar = () => {
     isLoadingObjects,
     isLoadingSections,
     setSelectedRagObject,
-    setSelectedLogicalSection
+    setSelectedLogicalSection,
+    fetchAvailableRagObjects,
+    fetchAvailableLogicalSections
   } = useRagStore();
   const { theme } = useThemeContext();
   const location = useLocation();
@@ -42,6 +44,30 @@ export const Sidebar = () => {
       fetchConversations(user.id);
     }
   }, [user, fetchConversations]);
+
+  // Track if we've already fetched to avoid double fetches in dev mode
+  const ragObjectsFetchedRef = React.useRef(false);
+  const logicalSectionsFetchedRef = React.useRef(false);
+
+  // Load RAG objects when RAG mode is enabled or on mount if already enabled
+  useEffect(() => {
+    if (isRagMode && availableRagObjects.length === 0 && !ragObjectsFetchedRef.current) {
+      ragObjectsFetchedRef.current = true;
+      fetchAvailableRagObjects().then(() => {
+        ragObjectsFetchedRef.current = false;
+      });
+    }
+  }, [isRagMode, availableRagObjects.length, fetchAvailableRagObjects]);
+
+  // Load logical sections when object is selected
+  useEffect(() => {
+    if (selectedRagObject && availableLogicalSections.length === 0 && !logicalSectionsFetchedRef.current) {
+      logicalSectionsFetchedRef.current = true;
+      fetchAvailableLogicalSections(selectedRagObject.id).then(() => {
+        logicalSectionsFetchedRef.current = false;
+      });
+    }
+  }, [selectedRagObject, availableLogicalSections.length, fetchAvailableLogicalSections]);
 
   const handleNewChat = () => {
     console.log('[Sidebar] New chat button clicked');

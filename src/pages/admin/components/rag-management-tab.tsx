@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Space, Typography, App, Popconfirm, InputNumber } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, Select, Space, Typography, App, Popconfirm, InputNumber, Row, Col } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, TeamOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/shared/lib/supabase';
+import { RagObjectsModal } from './rag-objects-modal';
 
 const { Title, Text } = Typography;
-const { TextArea } = Input;
 
-// Fetch functions for admin
+// Fetch functions
 const fetchRagObjects = async () => {
   const { data: { session } } = await supabase.auth.getSession();
   const response = await fetch('/api/v1/admin/rag/objects', {
@@ -47,10 +47,20 @@ const fetchKnowledgeBases = async () => {
 export const RagManagementTab: React.FC = () => {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
-  const [activeSection, setActiveSection] = useState<'objects' | 'sections' | 'buckets' | 'kb'>('objects');
+  const [activeSection, setActiveSection] = useState<'sections' | 'buckets' | 'kb'>(() => {
+    const saved = localStorage.getItem('ragManagementActiveTab');
+    return (saved as 'sections' | 'buckets' | 'kb') || 'sections';
+  });
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+
+  // Save active section to localStorage when it changes
+  const handleSectionChange = (section: 'sections' | 'buckets' | 'kb') => {
+    setActiveSection(section);
+    localStorage.setItem('ragManagementActiveTab', section);
+  };
 
   // Modals
-  const [objectModalVisible, setObjectModalVisible] = useState(false);
+  const [objectsModalVisible, setObjectsModalVisible] = useState(false);
   const [sectionModalVisible, setSectionModalVisible] = useState(false);
   const [bucketModalVisible, setBucketModalVisible] = useState(false);
   const [kbModalVisible, setKbModalVisible] = useState(false);
@@ -59,35 +69,37 @@ export const RagManagementTab: React.FC = () => {
   const [form] = Form.useForm();
 
   // Queries
-  const { data: objects = [], isLoading: objectsLoading } = useQuery({ 
-    queryKey: ['ragObjects'], 
+  const { data: objects = [], isLoading: objectsLoading } = useQuery({
+    queryKey: ['ragObjects'],
     queryFn: fetchRagObjects,
     refetchOnWindowFocus: false,
-    staleTime: 5 * 60 * 1000 // 5 minutes
-  });
-  const { data: sections = [], isLoading: sectionsLoading } = useQuery({ 
-    queryKey: ['ragSections'], 
-    queryFn: fetchLogicalSections,
-    refetchOnWindowFocus: false,
-    staleTime: 5 * 60 * 1000 // 5 minutes
-  });
-  const { data: buckets = [], isLoading: bucketsLoading } = useQuery({ 
-    queryKey: ['ragBuckets'], 
-    queryFn: fetchS3Buckets,
-    refetchOnWindowFocus: false,
-    staleTime: 5 * 60 * 1000 // 5 minutes
-  });
-  const { data: knowledgeBases = [], isLoading: kbLoading } = useQuery({ 
-    queryKey: ['ragKnowledgeBases'], 
-    queryFn: fetchKnowledgeBases,
-    refetchOnWindowFocus: false,
-    staleTime: 5 * 60 * 1000 // 5 minutes
+    staleTime: 5 * 60 * 1000
   });
 
-  // Helper to determine which queries to invalidate based on endpoint
+  const { data: sections = [], isLoading: sectionsLoading } = useQuery({
+    queryKey: ['ragSections'],
+    queryFn: fetchLogicalSections,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000
+  });
+
+  const { data: buckets = [], isLoading: bucketsLoading } = useQuery({
+    queryKey: ['ragBuckets'],
+    queryFn: fetchS3Buckets,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000
+  });
+
+  const { data: knowledgeBases = [], isLoading: kbLoading } = useQuery({
+    queryKey: ['ragKnowledgeBases'],
+    queryFn: fetchKnowledgeBases,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000
+  });
+
+  // Helper for query invalidation
   const getQueriesToInvalidate = (endpoint: string): string[] => {
     const queries = [];
-    if (endpoint.includes('/rag/objects')) queries.push('ragObjects');
     if (endpoint.includes('/rag/logical-sections')) queries.push('ragSections');
     if (endpoint.includes('/rag/buckets')) queries.push('ragBuckets');
     if (endpoint.includes('/rag/knowledge-bases')) queries.push('ragKnowledgeBases');
@@ -100,7 +112,7 @@ export const RagManagementTab: React.FC = () => {
       const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${session?.access_token}`,
           'Content-Type': 'application/json'
         },
@@ -125,7 +137,7 @@ export const RagManagementTab: React.FC = () => {
       const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(endpoint, {
         method: 'PUT',
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${session?.access_token}`,
           'Content-Type': 'application/json'
         },
@@ -153,6 +165,7 @@ export const RagManagementTab: React.FC = () => {
         headers: { 'Authorization': `Bearer ${session?.access_token}` }
       });
       if (!response.ok) throw new Error('Failed to delete');
+      return response.json();
     },
     onSuccess: (_, endpoint) => {
       const queriesToInvalidate = getQueriesToInvalidate(endpoint);
@@ -165,31 +178,12 @@ export const RagManagementTab: React.FC = () => {
   });
 
   const closeModals = () => {
-    setObjectModalVisible(false);
+    setObjectsModalVisible(false);
     setSectionModalVisible(false);
     setBucketModalVisible(false);
     setKbModalVisible(false);
     setEditingItem(null);
     form.resetFields();
-  };
-
-  // Handlers for Objects
-  const handleObjectSubmit = (values: any) => {
-    if (editingItem) {
-      updateMutation.mutate({
-        endpoint: `/api/v1/admin/rag/objects/${editingItem.id}`,
-        data: values
-      });
-    } else {
-      createMutation.mutate({
-        endpoint: '/api/v1/admin/rag/objects',
-        data: values
-      });
-    }
-  };
-
-  const handleDeleteObject = (id: string) => {
-    deleteMutation.mutate(`/api/v1/admin/rag/objects/${id}`);
   };
 
   // Handlers for Sections
@@ -238,9 +232,7 @@ export const RagManagementTab: React.FC = () => {
         data: values
       });
     } else {
-      // For new KB, calculate version_number automatically
       try {
-        // Count existing KBs with the same cloud_kb_root_id
         const { data: { session } } = await supabase.auth.getSession();
         const response = await fetch('/api/v1/admin/rag/knowledge-bases', {
           headers: { 'Authorization': `Bearer ${session?.access_token}` }
@@ -248,7 +240,7 @@ export const RagManagementTab: React.FC = () => {
         const existingKbs = await response.json();
         const sameRootIdKbs = existingKbs.filter((kb: any) => kb.cloud_kb_root_id === values.cloud_kb_root_id);
         const nextVersion = sameRootIdKbs.length + 1;
-        
+
         createMutation.mutate({
           endpoint: '/api/v1/admin/rag/knowledge-bases',
           data: { ...values, version_number: nextVersion }
@@ -264,45 +256,30 @@ export const RagManagementTab: React.FC = () => {
     deleteMutation.mutate(`/api/v1/admin/rag/knowledge-bases/${id}`);
   };
 
-  // Table columns
-  const objectColumns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 280 },
-    { title: 'Название', dataIndex: 'name', key: 'name' },
-    {
-      title: 'Действия',
-      key: 'actions',
-      render: (_: any, record: any) => (
-        <Space>
-          <Button 
-            icon={<EditOutlined />} 
-            size="small"
-            onClick={() => {
-              setEditingItem(record);
-              form.setFieldsValue(record);
-              setObjectModalVisible(true);
-            }}
-          />
-          <Popconfirm
-            title="Удалить объект?"
-            onConfirm={() => handleDeleteObject(record.id)}
-          >
-            <Button icon={<DeleteOutlined />} size="small" danger />
-          </Popconfirm>
-        </Space>
-      )
-    }
-  ];
+  // Filtered data
+  const filteredBuckets = selectedObjectId
+    ? buckets.filter(b => b.rag_object_id === selectedObjectId)
+    : buckets;
 
+  const filteredKbs = selectedObjectId
+    ? knowledgeBases.filter(kb =>
+        buckets
+          .filter(b => b.rag_object_id === selectedObjectId)
+          .some(b => b.id === kb.s3_bucket_id)
+      )
+    : knowledgeBases;
+
+  // Table columns
   const sectionColumns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 280 },
     { title: 'Название', dataIndex: 'name', key: 'name' },
     {
       title: 'Действия',
       key: 'actions',
+      width: 120,
       render: (_: any, record: any) => (
         <Space>
-          <Button 
-            icon={<EditOutlined />} 
+          <Button
+            icon={<EditOutlined />}
             size="small"
             onClick={() => {
               setEditingItem(record);
@@ -322,21 +299,16 @@ export const RagManagementTab: React.FC = () => {
   ];
 
   const bucketColumns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 200 },
     { title: 'Имя бакета', dataIndex: 'name', key: 'name' },
-    { title: 'ID Тенанта', dataIndex: 'tenant_id', key: 'tenant_id', width: 200 },
-    { 
-      title: 'Объект', 
-      key: 'object',
-      render: (_: any, record: any) => record.rag_objects?.name || 'N/A'
-    },
+    { title: 'ID Тенанта', dataIndex: 'tenant_id', key: 'tenant_id' },
     {
       title: 'Действия',
       key: 'actions',
+      width: 120,
       render: (_: any, record: any) => (
         <Space>
-          <Button 
-            icon={<EditOutlined />} 
+          <Button
+            icon={<EditOutlined />}
             size="small"
             onClick={() => {
               setEditingItem(record);
@@ -360,15 +332,13 @@ export const RagManagementTab: React.FC = () => {
   ];
 
   const kbColumns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 180 },
-    { title: 'Название', dataIndex: 'name', key: 'name', width: 150 },
-    { title: 'Root ID', dataIndex: 'cloud_kb_root_id', key: 'cloud_kb_root_id', width: 180 },
-    { title: 'Version ID', dataIndex: 'cloud_kb_version_id', key: 'cloud_kb_version_id', width: 180 },
+    { title: 'Название', dataIndex: 'name', key: 'name' },
+    { title: 'ID базы знаний', dataIndex: 'cloud_kb_root_id', key: 'cloud_kb_root_id' },
+    { title: 'ID версии', dataIndex: 'cloud_kb_version_id', key: 'cloud_kb_version_id' },
     { title: 'Версия', dataIndex: 'version_number', key: 'version_number', width: 80 },
-    { 
-      title: 'Раздел', 
+    {
+      title: 'Раздел',
       key: 'section',
-      width: 150,
       render: (_: any, record: any) => record.rag_logical_sections?.name || 'N/A'
     },
     {
@@ -377,8 +347,8 @@ export const RagManagementTab: React.FC = () => {
       width: 120,
       render: (_: any, record: any) => (
         <Space>
-          <Button 
-            icon={<EditOutlined />} 
+          <Button
+            icon={<EditOutlined />}
             size="small"
             onClick={() => {
               setEditingItem(record);
@@ -405,126 +375,134 @@ export const RagManagementTab: React.FC = () => {
   ];
 
   return (
-    <div>
-      <Title level={3}>Управление RAG</Title>
-
-      <Space style={{ marginBottom: 16 }}>
-        <Button 
-          type={activeSection === 'objects' ? 'primary' : 'default'}
-          onClick={() => setActiveSection('objects')}
-        >
-          Объекты
-        </Button>
-        <Button 
-          type={activeSection === 'sections' ? 'primary' : 'default'}
-          onClick={() => setActiveSection('sections')}
-        >
-          Логические разделы
-        </Button>
-        <Button 
-          type={activeSection === 'buckets' ? 'primary' : 'default'}
-          onClick={() => setActiveSection('buckets')}
-        >
-          S3 Бакеты
-        </Button>
-        <Button 
-          type={activeSection === 'kb' ? 'primary' : 'default'}
-          onClick={() => setActiveSection('kb')}
-        >
-          Базы знаний
-        </Button>
-      </Space>
-
-      {activeSection === 'objects' && (
-        <>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />}
-            onClick={() => setObjectModalVisible(true)}
-            style={{ marginBottom: 16 }}
-          >
-            Добавить объект
-          </Button>
-          <Table 
-            columns={objectColumns} 
-            dataSource={objects} 
-            rowKey="id"
+    <div style={{ padding: 24 }}>
+      {/* Header with object selector and objects button */}
+      <Row gutter={16} style={{ marginBottom: 24, alignItems: 'center' }}>
+        <Col>
+          <Title level={3} style={{ margin: 0 }}>Управление RAG</Title>
+        </Col>
+        <Col>
+          <Select
+            placeholder="Выберите объект"
+            value={selectedObjectId}
+            onChange={setSelectedObjectId}
+            style={{ width: 250 }}
+            allowClear
+            options={objects.map(obj => ({ label: obj.name, value: obj.id }))}
             loading={objectsLoading}
           />
-        </>
-      )}
-
-      {activeSection === 'sections' && (
-        <>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />}
-            onClick={() => setSectionModalVisible(true)}
-            style={{ marginBottom: 16 }}
+        </Col>
+        <Col>
+          <Button
+            icon={<TeamOutlined />}
+            onClick={() => setObjectsModalVisible(true)}
           >
-            Добавить раздел
+            Объекты
           </Button>
-          <Table 
-            columns={sectionColumns} 
-            dataSource={sections} 
-            rowKey="id"
-            loading={sectionsLoading}
-          />
-        </>
+        </Col>
+      </Row>
+
+      {/* Tabs with Add button */}
+      <Row justify="space-between" style={{ marginBottom: 16 }}>
+        <Col>
+          <Space>
+            <Button
+              type={activeSection === 'sections' ? 'primary' : 'default'}
+              onClick={() => handleSectionChange('sections')}
+            >
+              Логические разделы
+            </Button>
+            <Button
+              type={activeSection === 'buckets' ? 'primary' : 'default'}
+              onClick={() => handleSectionChange('buckets')}
+            >
+              S3 бакеты
+            </Button>
+            <Button
+              type={activeSection === 'kb' ? 'primary' : 'default'}
+              onClick={() => handleSectionChange('kb')}
+            >
+              Базы знаний
+            </Button>
+          </Space>
+        </Col>
+        <Col>
+          {activeSection === 'sections' && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setSectionModalVisible(true)}
+            >
+              Добавить раздел
+            </Button>
+          )}
+          {activeSection === 'buckets' && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setBucketModalVisible(true)}
+            >
+              Добавить бакет
+            </Button>
+          )}
+          {activeSection === 'kb' && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setKbModalVisible(true)}
+            >
+              Добавить базу знаний
+            </Button>
+          )}
+        </Col>
+      </Row>
+
+      {/* Sections Tab */}
+      {activeSection === 'sections' && (
+        <Table
+          columns={sectionColumns}
+          dataSource={sections}
+          rowKey="id"
+          loading={sectionsLoading}
+        />
       )}
 
+      {/* Buckets Tab */}
       {activeSection === 'buckets' && (
         <>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />}
-            onClick={() => setBucketModalVisible(true)}
-            style={{ marginBottom: 16 }}
-          >
-            Добавить бакет
-          </Button>
-          <Table 
-            columns={bucketColumns} 
-            dataSource={buckets} 
+          {selectedObjectId && (
+            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+              Фильтр по объекту: {objects.find(o => o.id === selectedObjectId)?.name}
+            </Text>
+          )}
+          <Table
+            columns={bucketColumns}
+            dataSource={filteredBuckets}
             rowKey="id"
             loading={bucketsLoading}
           />
         </>
       )}
 
+      {/* Knowledge Bases Tab */}
       {activeSection === 'kb' && (
         <>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />}
-            onClick={() => setKbModalVisible(true)}
-            style={{ marginBottom: 16 }}
-          >
-            Добавить базу знаний
-          </Button>
-          <Table 
-            columns={kbColumns} 
-            dataSource={knowledgeBases} 
+          {selectedObjectId && (
+            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+              Фильтр по объекту: {objects.find(o => o.id === selectedObjectId)?.name}
+            </Text>
+          )}
+          <Table
+            columns={kbColumns}
+            dataSource={filteredKbs}
             rowKey="id"
             loading={kbLoading}
-            scroll={{ x: 1200 }}
           />
         </>
       )}
 
-      {/* Object Modal */}
-      <Modal
-        title={editingItem ? 'Редактировать объект' : 'Добавить объект'}
-        open={objectModalVisible}
-        onCancel={closeModals}
-        onOk={() => form.submit()}
-      >
-        <Form form={form} onFinish={handleObjectSubmit} layout="vertical">
-          <Form.Item name="name" label="Название" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
+      {/* Objects Modal */}
+      <RagObjectsModal visible={objectsModalVisible} onClose={() => setObjectsModalVisible(false)} />
 
       {/* Section Modal */}
       <Modal
@@ -552,7 +530,7 @@ export const RagManagementTab: React.FC = () => {
             <Input />
           </Form.Item>
           <Form.Item name="rag_object_id" label="Объект" rules={[{ required: true }]}>
-            <Select options={objects.map((o: any) => ({ label: o.name, value: o.id }))} />
+            <Select options={objects.map(o => ({ label: o.name, value: o.id }))} />
           </Form.Item>
           <Form.Item name="tenant_id" label="ID Тенанта" rules={[{ required: true }]}>
             <Input placeholder="UUID тенанта" />
@@ -572,10 +550,10 @@ export const RagManagementTab: React.FC = () => {
           <Form.Item name="name" label="Название" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="cloud_kb_root_id" label="Cloud KB Root ID" rules={[{ required: true }]}>
+          <Form.Item name="cloud_kb_root_id" label="ID базы знаний" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="cloud_kb_version_id" label="Cloud KB Version ID" rules={[{ required: true }]}>
+          <Form.Item name="cloud_kb_version_id" label="ID версии" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
           {editingItem && (
@@ -584,10 +562,10 @@ export const RagManagementTab: React.FC = () => {
             </Form.Item>
           )}
           <Form.Item name="s3_bucket_id" label="S3 Бакет" rules={[{ required: true }]}>
-            <Select options={buckets.map((b: any) => ({ label: `${b.name} (${b.rag_objects?.name})`, value: b.id }))} />
+            <Select options={buckets.map(b => ({ label: `${b.name} (${b.rag_objects?.name})`, value: b.id }))} />
           </Form.Item>
           <Form.Item name="logical_section_id" label="Логический раздел" rules={[{ required: true }]}>
-            <Select options={sections.map((s: any) => ({ label: s.name, value: s.id }))} />
+            <Select options={sections.map(s => ({ label: s.name, value: s.id }))} />
           </Form.Item>
         </Form>
       </Modal>

@@ -20,6 +20,7 @@ const CurrentUserStats = () => {
         queryKey: ['currentUserSimpleStats', user?.id],
         queryFn: () => user ? getCurrentUserSimpleStats(user.id) : null,
         enabled: !!user,
+        refetchOnWindowFocus: false,
     });
 
     if (isLoading || !data) return <Spin size="small" />;
@@ -73,6 +74,7 @@ const UsageStats = () => {
         },
         enabled: !!user,
         refetchInterval: 30000,
+        refetchOnWindowFocus: false,
     });
 
     if (isLoading) {

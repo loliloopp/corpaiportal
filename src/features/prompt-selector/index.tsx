@@ -12,6 +12,7 @@ export const PromptSelector: React.FC = () => {
   const { data: prompts = [], isLoading } = useQuery({
     queryKey: ['allPrompts'],
     queryFn: getAllPrompts,
+    refetchOnWindowFocus: false,
   });
 
   // Load preprocessing setting and sync with store

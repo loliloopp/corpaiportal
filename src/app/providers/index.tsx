@@ -14,10 +14,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const setSession = useAuthStore((state) => state.setSession);
   const setLoading = useAuthStore((state) => state.setLoading);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [lastSessionId, setLastSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       await setSession(session);
+      setLastSessionId(session?.id ?? null);
       setLoading(false);
       setInitialLoadComplete(true);
     });
@@ -25,14 +27,19 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+      // Only update if the session ID actually changed (prevent re-renders on reconnect)
+      const currentSessionId = session?.id ?? null;
+      if (currentSessionId !== lastSessionId) {
+        setSession(session);
+        setLastSessionId(currentSessionId);
+      }
       setLoading(false);
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [setSession, setLoading]);
+  }, [setSession, setLoading, lastSessionId]);
 
   if (!initialLoadComplete) {
     return <Spin fullscreen />;

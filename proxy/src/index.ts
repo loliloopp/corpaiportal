@@ -101,14 +101,14 @@ async function main() {
     // Settings routes (PUT requires auth)
     app.use('/api/v1', settingsRoutes(supabase));
     
+    // Admin routes (require admin role) - NO rate limiting
+    app.use('/api/v1/admin', adminRoutes(supabase));
+
     // Chat routes (add specific limiter)
-    app.use('/api/v1', chatLimiter, chatRoutes(supabase, chatService));
+    app.use('/api/v1/chat', chatLimiter, chatRoutes(supabase, chatService));
     
     // RAG routes (authenticated, with chat limiter)
-    app.use('/api/v1', chatLimiter, ragRoutes(supabase, chatService));
-
-    // Admin routes (require admin role)
-    app.use('/api/v1/admin', adminRoutes(supabase));
+    app.use('/api/v1/chat/rag', chatLimiter, ragRoutes(supabase, chatService));
 
     console.log("Routes defined.");
 
