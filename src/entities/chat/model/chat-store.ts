@@ -11,6 +11,8 @@ import { Model, MODELS } from '@/shared/config/models.config';
 import { getModelsWithAccess, ModelWithAccess, getUserAccessibleModels, AccessibleModel } from '@/entities/models/api/models-api';
 import { openRouterApi, OpenRouterModel } from '@/entities/models/api/openrouter-api';
 import { usePromptsStore } from '@/entities/prompts';
+import { useRagStore } from '@/entities/rag';
+import { sendRagQuery } from '@/entities/rag/api/rag-api';
 import { debounce } from '@/shared/utils/debounce';
 
 type Conversation = {
@@ -48,6 +50,7 @@ interface ChatState {
   setSelectedModel: (model: string) => void;
   setErrorHandler: (handler: ((error: { title: string; content: string }) => void) | null) => void;
   sendMessage: (content: string) => void;
+  sendRagMessage: (content: string) => Promise<void>;
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
@@ -241,9 +244,25 @@ export const useChatStore = create<ChatState>((set, get) => {
       const { activeConversation, selectedModel, messages, lastResponse } = get();
       const { user } = useAuthStore.getState();
       const { selectedPrompt } = usePromptsStore.getState();
+      const { isRagMode, selectedRagObject, selectedLogicalSection } = useRagStore.getState();
 
       if (!user) return;
 
+      // Check if RAG mode is enabled and required selections are made
+      if (isRagMode) {
+        if (!selectedRagObject || !selectedLogicalSection) {
+          get().onError?.({
+            title: 'Ошибка RAG',
+            content: 'Выберите объект и логический раздел для использования режима RAG'
+          });
+          return;
+        }
+
+        // Handle RAG mode
+        return get().sendRagMessage(content);
+      }
+
+      // Continue with standard chat logic
       set({ loading: true });
 
       const optimisticUserMessage: Message = {
@@ -385,7 +404,9 @@ export const useChatStore = create<ChatState>((set, get) => {
         }
 
         // If a new conversation was created, update the store and UI
+        console.log('[ChatStore] After response - activeConversation:', activeConversation, 'aiResponseData.id:', aiResponseData.id);
         if (!activeConversation && aiResponseData.id) {
+            console.log('[ChatStore] Creating new conversation:', aiResponseData.id);
             get().setActiveConversation(aiResponseData.id);
             get().fetchConversations(user.id);
         }
@@ -442,6 +463,119 @@ export const useChatStore = create<ChatState>((set, get) => {
       } finally {
           set({ loading: false });
           queryClient.invalidateQueries({ queryKey: ['usageStats', user?.id] });
+      }
+    },
+    
+    // RAG message sending function
+    sendRagMessage: async (content: string) => {
+      const { selectedModel, messages } = get();
+      const { user } = useAuthStore.getState();
+      const { selectedRagObject, selectedLogicalSection } = useRagStore.getState();
+
+      if (!user || !selectedRagObject || !selectedLogicalSection) return;
+
+      set({ loading: true });
+
+      const optimisticUserMessage: Message = {
+        id: nanoid(),
+        conversation_id: null, // Will be set after response
+        user_id: user.id,
+        role: 'user' as const,
+        content: content,
+        model: `RAG-${selectedModel}`,
+        created_at: new Date().toISOString(),
+      };
+
+      const optimisticAssistantId = nanoid();
+      const optimisticAssistantMessage: Message = {
+        id: optimisticAssistantId,
+        conversation_id: null, // Will be set after response
+        user_id: user.id,
+        role: 'assistant' as const,
+        content: '',
+        model: `RAG-${selectedModel}`,
+        created_at: new Date().toISOString(),
+      };
+
+      set((state) => ({ 
+        messages: [...state.messages, optimisticUserMessage, optimisticAssistantMessage]
+      }));
+
+      try {
+        // Build conversation history
+        const conversationHistory: ChatMessage[] = [...messages, optimisticUserMessage].map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+
+        // Send RAG query
+        await sendRagQuery(
+          selectedRagObject.id,
+          selectedLogicalSection.id,
+          content,
+          selectedModel,
+          conversationHistory,
+          // onChunk
+          (chunk: string) => {
+            set((state) => {
+              const lastMessage = state.messages[state.messages.length - 1];
+              if (lastMessage && lastMessage.id === optimisticAssistantId) {
+                const updatedMessages = [...state.messages];
+                updatedMessages[updatedMessages.length - 1] = {
+                  ...lastMessage,
+                  content: lastMessage.content + chunk
+                };
+                return { messages: updatedMessages };
+              }
+              return state;
+            });
+          },
+          // onComplete - receives conversationId from server
+          (conversationId: string) => {
+            console.log('[ChatStore] RAG response complete, conversationId:', conversationId);
+            set({ loading: false });
+            
+            // Update optimistic messages with real conversation_id
+            set((state) => ({
+              messages: state.messages.map(msg => 
+                (msg.id === optimisticUserMessage.id || msg.id === optimisticAssistantId)
+                  ? { ...msg, conversation_id: conversationId }
+                  : msg
+              )
+            }));
+            
+            // Update active conversation
+            get().setActiveConversation(conversationId);
+            get().fetchConversations(user.id);
+          },
+          // onError
+          (error: string) => {
+            set({ loading: false });
+            get().onError?.({
+              title: 'Ошибка RAG',
+              content: error
+            });
+            // Remove optimistic messages on error
+            set((state) => ({
+              messages: state.messages.filter(
+                m => m.id !== optimisticUserMessage.id && m.id !== optimisticAssistantId
+              )
+            }));
+          }
+        );
+
+      } catch (error: any) {
+        set({ loading: false });
+        get().onError?.({
+          title: 'Ошибка RAG',
+          content: error.message || 'Не удалось отправить RAG-запрос'
+        });
+        // Remove optimistic messages on error
+        set((state) => ({
+          messages: state.messages.filter(
+            m => m.id !== optimisticUserMessage.id && m.id !== optimisticAssistantId
+          )
+        }));
       }
     },
   };

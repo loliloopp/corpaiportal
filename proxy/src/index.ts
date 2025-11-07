@@ -14,16 +14,18 @@ import { LIMITS } from './config/limits';
 
 // Middleware
 import { createAuthMiddleware, requireAdmin } from './middleware/auth';
-import { apiLimiter, chatLimiter } from './middleware/rateLimiter';
+import { chatLimiter } from './middleware/rateLimiter';
 
 // Routes
 import chatRoutes from './routes/v1/chat';
 import modelRoutes from './routes/v1/models';
 import adminRoutes from './routes/v1/admin';
 import settingsRoutes from './routes/v1/settings';
+import ragRoutes from './routes/v1/rag';
 
 // Services
 import ChatService from './services/chatService';
+import CloudRuTokenService from './services/CloudRuTokenService';
 
 async function main() {
     const port = process.env.PORT || 3000;
@@ -43,13 +45,22 @@ async function main() {
     // Wait for critical data to load before starting the server
     await chatService.loadModelRoutingConfig();
     await chatService.fetchOpenRouterPricing();
+    
+    // Preload Cloud.ru access token
+    const tokenService = CloudRuTokenService.getInstance();
+    try {
+        await tokenService.getAccessToken();
+        console.log("Cloud.ru access token obtained.");
+    } catch (error) {
+        console.warn("Failed to obtain Cloud.ru access token on startup. Will retry on first RAG request.");
+    }
+    
     console.log("Critical services preloaded.");
 
     // 3. Create Express App
     const app = express();
     app.use(cors(CORS_OPTIONS));
     app.use(express.json({ limit: `${LIMITS.MAX_MESSAGE_SIZE_BYTES}b` }));
-    app.use('/api', apiLimiter); // Apply general rate limiting to all /api requests
 
     // Create auth middleware instance
     const authenticateUser = createAuthMiddleware(supabase);
@@ -92,9 +103,12 @@ async function main() {
     
     // Chat routes (add specific limiter)
     app.use('/api/v1', chatLimiter, chatRoutes(supabase, chatService));
+    
+    // RAG routes (authenticated, with chat limiter)
+    app.use('/api/v1', chatLimiter, ragRoutes(supabase, chatService));
 
     // Admin routes (require admin role)
-    app.use('/api/v1', adminRoutes(supabase));
+    app.use('/api/v1/admin', adminRoutes(supabase));
 
     console.log("Routes defined.");
 

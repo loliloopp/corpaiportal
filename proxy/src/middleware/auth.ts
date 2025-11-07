@@ -8,13 +8,17 @@ export function createAuthMiddleware(supabase: SupabaseClient) {
             const jwt = authHeader?.replace('Bearer ', '') || req.body?.jwt;
 
             if (!jwt) {
+                console.warn(`[Auth] Missing JWT token for ${req.method} ${req.path}`);
                 return res.status(401).json({ error: 'Missing authentication token.' });
             }
 
             const { data: { user }, error: userError } = await supabase.auth.getUser(jwt);
             if (userError || !user) {
+                console.warn(`[Auth] Invalid JWT token: ${userError?.message}`);
                 return res.status(401).json({ error: 'Invalid authentication token.' });
             }
+
+            console.log(`[Auth] User authenticated: ${user.id} for ${req.method} ${req.path}`);
 
             const { data: profile, error: profileError } = await supabase
                 .from('user_profiles')
@@ -23,6 +27,7 @@ export function createAuthMiddleware(supabase: SupabaseClient) {
                 .single();
 
             if (profileError || !profile) {
+                console.error(`[Auth] Profile not found for user ${user.id}: ${profileError?.message}`);
                 return res.status(403).json({ error: 'User profile not found.' });
             }
 
@@ -30,7 +35,7 @@ export function createAuthMiddleware(supabase: SupabaseClient) {
             req.profile = profile;
             next();
         } catch (error: any) {
-            console.error('Authentication error:', error);
+            console.error('[Auth] Authentication error:', error);
             return res.status(500).json({ error: 'Authentication failed.' });
         }
     };

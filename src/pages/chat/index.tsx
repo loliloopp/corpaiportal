@@ -98,6 +98,7 @@ const ChatPage = () => {
   // Wrapper around sendMessage that handles navigation for new conversations
   const handleSendMessage = async (message: string) => {
     const wasCreating = !activeConversation;
+    console.log('[ChatPage] Sending message, wasCreating:', wasCreating);
     
     await storeSendMessage(message);
     
@@ -105,10 +106,12 @@ const ChatPage = () => {
     if (wasCreating) {
       setTimeout(() => {
         const { activeConversation: newConversation } = useChatStore.getState();
+        console.log('[ChatPage] New conversation ID:', newConversation, 'current conversationId:', conversationId);
         if (newConversation && newConversation !== conversationId) {
+          console.log('[ChatPage] Navigating to /chat/', newConversation);
           navigate(`/chat/${newConversation}`, { replace: true });
         }
-      }, 100);
+      }, 500); // Increased delay to ensure store is updated
     }
   };
 

@@ -5,6 +5,7 @@ import { UsersTab } from './components/users-tab';
 import { GeneralStatsTab } from './components/general-stats-tab';
 import { StatsUserTab } from './components/stats-user-tab';
 import { PromptsTab } from './components/prompts-tab';
+import { RagManagementTab } from './components/rag-management-tab';
 import ModelRoutingTable from '@/widgets/model-routing-table';
 
 const ModelsTab: React.FC = () => {
@@ -27,6 +28,7 @@ const AdminPage: React.FC = () => {
     { key: 'users', label: 'Пользователи' },
     { key: 'models', label: 'Модели' },
     { key: 'prompts', label: 'Промты' },
+    { key: 'rag', label: 'Управление RAG' },
     { key: 'general-stats', label: 'Общая статистика' },
     { key: 'user-stats', label: 'Статистика по пользователям' },
   ];
@@ -44,6 +46,7 @@ const AdminPage: React.FC = () => {
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'models' && <ModelsTab />}
         {activeTab === 'prompts' && <PromptsTab />}
+        {activeTab === 'rag' && <RagManagementTab />}
         {activeTab === 'general-stats' && <GeneralStatsTab />}
         {activeTab === 'user-stats' && <StatsUserTab />}
       </div>

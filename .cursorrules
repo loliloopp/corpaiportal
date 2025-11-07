@@ -32,6 +32,7 @@
 - Безопасность через прокси, НЕ через Row Level Security (RLS)
 - Все сообщения в чате (вопросы и ответы) на русском языке
 - **Environment Variables**: ТОЛЬКО `.env.local` файлы
+- **Cloud.ru RAG**: `CLOUD_RU_KEY_ID` и `CLOUD_RU_KEY_SECRET` для авторизации через временные токены
 - **Стиль общения**: Писать только по делу, без лишних слов.
 
 ## Security Features (Implemented)
@@ -85,6 +86,10 @@
   CREATE TABLE public.my_table (id uuid PRIMARY KEY, ...);
   GRANT SELECT, INSERT, UPDATE, DELETE ON public.my_table TO service_role;
   ```
+- **Новые миграции**: ВСЕГДА создавать НОВЫЕ миграционные файлы, НИКОГДА не дополнять существующие:
+  - Правило: `supabase/migrations/YYYYMMDDHHMMSS_description.sql`
+  - Пример: Если нужно изменить таблицу `users`, создать новый файл `supabase/migrations/20251106120000_add_column_to_users.sql`
+  - Причина: Идемпотентность и отслеживаемость изменений БД через git
 
 ## Plan Mode Requirements
 **ВАЖНО**: В режиме плана предоставлять ТОЛЬКО алгоритмы без примеров кода:

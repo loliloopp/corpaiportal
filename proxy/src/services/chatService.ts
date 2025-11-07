@@ -109,7 +109,10 @@ class ChatService {
 
             let fullContent = '';
             
+            console.log('[ChatService] Setting up stream handlers');
+            
             aiResponse.data.on('data', (chunk: Buffer) => {
+                console.log('[ChatService] Received chunk from AI provider:', chunk.length, 'bytes');
                 // Reset timeout on each data chunk
                 clearTimeout(streamTimeout);
                 setTimeout(() => {
@@ -124,17 +127,22 @@ class ChatService {
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             const data = line.slice(6);
-                            if (data === '[DONE]') continue;
+                            if (data === '[DONE]') {
+                                console.log('[ChatService] Stream completed (DONE)');
+                                continue;
+                            }
                             
                             const parsed = JSON.parse(data);
                             if (parsed.choices && parsed.choices[0]?.delta?.content) {
                                 const contentChunk = parsed.choices[0].delta.content;
                                 fullContent += contentChunk;
+                                console.log('[ChatService] Writing content chunk:', contentChunk.length, 'chars');
                                 res.write(`data: ${JSON.stringify({ type: 'content', content: contentChunk })}\n\n`);
                             }
                         }
                     }
                 } catch(e) {
+                    console.error('[ChatService] Error parsing chunk:', (e as Error).message);
                     // This can happen with partial JSON chunks, ignore for now
                 }
             });
@@ -143,8 +151,10 @@ class ChatService {
                 clearTimeout(streamTimeout);
                 try {
                      const { id: assistantMessageId } = await this.saveMessage(conversationId!, userId, 'assistant', fullContent, payload.model);
-                     const { usage, cost } = await this.logUsage(userId, payload.model, fullContent, provider);
-                     costLimiterService.addCost(cost);
+                     const { cost } = await this.logUsage(userId, payload.model, fullContent, provider);
+                     if (cost) {
+                       costLimiterService.addCost(cost);
+                     }
     
                     res.write(`data: ${JSON.stringify({ type: 'complete', id: conversationId, message_id: assistantMessageId })}\n\n`);
                     res.end();
@@ -181,6 +191,12 @@ class ChatService {
 
         const routeConfig = this.modelRoutingConfig[model];
         const useOpenRouter = routeConfig?.useOpenRouter ?? false;
+
+        console.log(`[ChatService] Preparing request for model: ${model}`, {
+            hasRouteConfig: !!routeConfig,
+            useOpenRouter,
+            openRouterModelId: routeConfig?.openRouterModelId
+        });
 
         const cleanedMessages = messages.map(({ role, content }) => ({ role, content }));
 
