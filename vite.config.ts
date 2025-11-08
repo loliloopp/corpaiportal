@@ -11,12 +11,7 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: {
-      '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:3001',
-        changeOrigin: true,
-        secure: false,
-      },
-    },
+    // Note: API proxy handled in apiClient.ts
+    // Uses explicit http://localhost:3001 for localhost, relative paths for production
   },
 })

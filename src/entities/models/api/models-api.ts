@@ -310,7 +310,12 @@ export const getModelCosts = async (): Promise<Map<string, string | null>> => {
  */
 export const getSetting = async (key: string): Promise<boolean> => {
     try {
-        const response = await fetch(`/api/v1/settings/${key}`, {
+        // Use explicit localhost:3001 for development, relative paths for production
+        const apiUrl = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+            ? `http://localhost:3001/api/v1/settings/${key}`
+            : `/api/v1/settings/${key}`;
+
+        const response = await fetch(apiUrl, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -353,7 +358,12 @@ export const setSetting = async (key: string, value: boolean): Promise<void> => 
             throw new Error('User not authenticated. Missing authentication token.');
         }
 
-        const response = await fetch(`/api/v1/settings/${key}`, {
+        // Use explicit localhost:3001 for development, relative paths for production
+        const apiUrl = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+            ? `http://localhost:3001/api/v1/settings/${key}`
+            : `/api/v1/settings/${key}`;
+
+        const response = await fetch(apiUrl, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',

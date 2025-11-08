@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Table, Button, Modal, Form, Input, Select, Space, Typography, App, Popconfirm, InputNumber, Row, Col } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, TeamOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, TeamOutlined, SettingOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/shared/lib/supabase';
 import { RagObjectsModal } from './rag-objects-modal';
+import { RagQuerySettingsTab } from './rag-query-settings-tab';
 
 const { Title, Text } = Typography;
 
@@ -47,14 +48,14 @@ const fetchKnowledgeBases = async () => {
 export const RagManagementTab: React.FC = () => {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
-  const [activeSection, setActiveSection] = useState<'sections' | 'buckets' | 'kb'>(() => {
+  const [activeSection, setActiveSection] = useState<'sections' | 'buckets' | 'kb' | 'query'>(() => {
     const saved = localStorage.getItem('ragManagementActiveTab');
-    return (saved as 'sections' | 'buckets' | 'kb') || 'sections';
+    return (saved as 'sections' | 'buckets' | 'kb' | 'query') || 'sections';
   });
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
 
   // Save active section to localStorage when it changes
-  const handleSectionChange = (section: 'sections' | 'buckets' | 'kb') => {
+  const handleSectionChange = (section: 'sections' | 'buckets' | 'kb' | 'query') => {
     setActiveSection(section);
     localStorage.setItem('ragManagementActiveTab', section);
   };
@@ -424,6 +425,13 @@ export const RagManagementTab: React.FC = () => {
             >
               Базы знаний
             </Button>
+            <Button
+              type={activeSection === 'query' ? 'primary' : 'default'}
+              icon={<SettingOutlined />}
+              onClick={() => handleSectionChange('query')}
+            >
+              Запрос
+            </Button>
           </Space>
         </Col>
         <Col>
@@ -500,6 +508,9 @@ export const RagManagementTab: React.FC = () => {
           />
         </>
       )}
+
+      {/* Query Settings Tab */}
+      {activeSection === 'query' && <RagQuerySettingsTab />}
 
       {/* Objects Modal */}
       <RagObjectsModal visible={objectsModalVisible} onClose={() => setObjectsModalVisible(false)} />

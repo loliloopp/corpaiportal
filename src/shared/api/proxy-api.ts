@@ -47,7 +47,12 @@ export const sendAIRequest = async (
     };
 
     try {
-        const response = await fetch('/api/v1/chat', {
+        // Use explicit localhost:3001 for development, relative paths for production
+        const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+            ? 'http://localhost:3001/api/v1/chat'
+            : '/api/v1/chat';
+        
+        const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -140,7 +145,12 @@ export const sendAIRequestStreaming = async (
     }
 
     try {
-        const response = await fetch('/api/v1/chat/stream', {
+        // Use explicit localhost:3001 for development, relative paths for production
+        const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+            ? 'http://localhost:3001/api/v1/chat/stream'
+            : '/api/v1/chat/stream';
+        
+        const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -257,7 +267,12 @@ export const sendAIRequestStreaming = async (
 export const proxyApi = {
     async get<T>(endpoint: string): Promise<T> {
         try {
-            const response = await fetch(endpoint);
+            // Use explicit localhost:3001 for development, relative paths for production
+            const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+                ? `http://localhost:3001${endpoint}`
+                : endpoint;
+            
+            const response = await fetch(url);
             if (!response.ok) {
                 let errorData: { error?: string; code?: string } | undefined;
                 try {
@@ -281,7 +296,12 @@ export const proxyApi = {
 
     async put<T>(endpoint: string, body: unknown): Promise<T> {
         try {
-            const response = await fetch(endpoint, {
+            // Use explicit localhost:3001 for development, relative paths for production
+            const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+                ? `http://localhost:3001${endpoint}`
+                : endpoint;
+            
+            const response = await fetch(url, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -311,7 +331,12 @@ export const proxyApi = {
 
     async post<T>(endpoint: string, body: unknown, headers?: Record<string, string>): Promise<T> {
         try {
-            const response = await fetch(endpoint, {
+            // Use explicit localhost:3001 for development, relative paths for production
+            const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+                ? `http://localhost:3001${endpoint}`
+                : endpoint;
+            
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

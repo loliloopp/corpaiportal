@@ -21,6 +21,7 @@ import chatRoutes from './routes/v1/chat';
 import modelRoutes from './routes/v1/models';
 import adminRoutes from './routes/v1/admin';
 import settingsRoutes from './routes/v1/settings';
+import publicSettingsRoutes from './routes/v1/public-settings';
 import ragRoutes from './routes/v1/rag';
 
 // Services
@@ -70,35 +71,12 @@ async function main() {
 
     // Public routes (no auth required)
     app.use('/api/v1', modelRoutes(supabase));
-    
-    // Public GET for settings (no auth required)
-    app.get('/api/v1/settings/:settingName', async (req, res) => {
-        const { settingName } = req.params;
-        try {
-            const { data, error } = await supabase
-                .from('settings')
-                .select('value')
-                .eq('key', settingName)
-                .single();
-
-            if (error) {
-                if (error.code === 'PGRST116') {
-                    return res.status(404).json({ error: `Setting '${settingName}' not found.` });
-                }
-                throw error;
-            }
-
-            res.status(200).json(data);
-        } catch (error: any) {
-            console.error(`Error fetching setting '${settingName}':`, error);
-            res.status(500).json({ error: `Failed to fetch setting '${settingName}'`, details: error.message });
-        }
-    });
+    app.use('/api/v1', publicSettingsRoutes(supabase)); // GET settings (public)
     
     // Authenticated routes
     app.use('/api/v1', authenticateUser); // All subsequent routes require a valid user
     
-    // Settings routes (PUT requires auth)
+    // Settings routes (PUT requires auth+admin)
     app.use('/api/v1', settingsRoutes(supabase));
     
     // Admin routes (require admin role) - NO rate limiting

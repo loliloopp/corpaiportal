@@ -15,12 +15,12 @@ export default (supabase: SupabaseClient, chatService: ChatService) => {
         next();
     };
 
-    router.post('/chat', validateRequest, async (req: Request, res: Response) => {
+    router.post('/', validateRequest, async (req: Request, res: Response) => {
         // Non-streaming endpoint is not implemented as client uses streaming
-        res.status(501).json({ error: 'Non-streaming chat is not implemented. Use /chat/stream.' });
+        res.status(501).json({ error: 'Non-streaming chat is not implemented. Use /stream.' });
     });
 
-    router.post('/chat/stream', validateRequest, async (req: Request, res: Response) => {
+    router.post('/stream', validateRequest, async (req: Request, res: Response) => {
         try {
             if (!req.user) {
                 // This should not happen if auth middleware is applied before this router

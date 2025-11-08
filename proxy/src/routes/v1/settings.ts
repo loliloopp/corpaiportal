@@ -7,7 +7,7 @@ export default (supabase: SupabaseClient) => {
     // PUT /api/v1/settings/:settingName (requires auth + admin)
     router.put('/settings/:settingName', async (req, res) => {
         const { settingName } = req.params;
-        const { value } = req.body;
+        const { value, rag_reranker_model } = req.body;
 
         try {
             // Check if user is authenticated (middleware should ensure this)
@@ -20,20 +20,40 @@ export default (supabase: SupabaseClient) => {
                 return res.status(403).json({ error: 'Admin access required.' });
             }
 
-            if (value === undefined || value === null) {
-                return res.status(400).json({ error: 'Missing or invalid value in request body.' });
+            // Determine what to update based on setting name
+            let updateData: any = {};
+            
+            if (settingName === 'rag_reranker_model' && rag_reranker_model !== undefined) {
+                // Update rag_reranker_model column
+                updateData.rag_reranker_model = rag_reranker_model;
+            } else if (value !== undefined) {
+                // Update value column for other settings
+                updateData.value = value === true || value === 'true' ? true : (value === false || value === 'false' ? false : value);
+            } else {
+                return res.status(400).json({ error: 'Missing value or rag_reranker_model in request body.' });
             }
 
+            // Try to update existing setting
             const { data, error } = await supabase
                 .from('settings')
-                .update({ value: String(value) })
+                .update(updateData)
                 .eq('key', settingName)
                 .select()
                 .single();
 
             if (error) {
                 if (error.code === 'PGRST116') {
-                    return res.status(404).json({ error: `Setting '${settingName}' not found.` });
+                    // Record doesn't exist, create it
+                    console.log(`Setting '${settingName}' not found, creating...`);
+                    const insertData = { key: settingName, ...updateData };
+                    const { data: newData, error: insertError } = await supabase
+                        .from('settings')
+                        .insert(insertData)
+                        .select()
+                        .single();
+
+                    if (insertError) throw insertError;
+                    return res.status(200).json(newData);
                 }
                 throw error;
             }

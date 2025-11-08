@@ -28,18 +28,35 @@ export default (supabase: SupabaseClient, chatService: ChatService) => {
     query: string, 
     cloud_kb_version_id: string,
     tokenService: CloudRuTokenService,
+    useReranking: boolean = false,
+    rerankerModel: string = 'BAAI/bge-reranker-v2-m3',
     retry: boolean = true
   ) {
     const accessToken = await tokenService.getAccessToken();
 
     try {
+      const payload: any = {
+        query: query,
+        retrieve_limit: 5,
+        rag_version: cloud_kb_version_id
+      };
+
+      // For reranking endpoint, use nested reranker_settings structure
+      if (useReranking) {
+        payload.reranker_settings = {
+          model: rerankerModel
+        };
+      }
+
+      console.log('[RAG] Sending payload to Cloud.ru:', {
+        endpoint: ragUrl,
+        payload: JSON.stringify(payload),
+        useReranking
+      });
+
       const response = await axios.post(
         ragUrl,
-        {
-          query: query,
-          retrieve_limit: 5,
-          rag_version: cloud_kb_version_id
-        },
+        payload,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -54,13 +71,22 @@ export default (supabase: SupabaseClient, chatService: ChatService) => {
       if (error.response?.status === 401 && retry) {
         console.warn('[RAG] Received 401, clearing token cache and retrying');
         tokenService.clearCache();
-        return makeRagRequest(ragUrl, query, cloud_kb_version_id, tokenService, false);
+        return makeRagRequest(ragUrl, query, cloud_kb_version_id, tokenService, useReranking, rerankerModel, false);
       }
+      console.error('[RAG] Error in makeRagRequest:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+        ragUrl,
+        useReranking,
+        rerankerModel
+      });
       throw error;
     }
   }
 
-  router.post('/chat/rag', async (req: Request, res: Response) => {
+  router.post('/', async (req: Request, res: Response) => {
     try {
       // Check authentication
       if (!req.user) {
@@ -115,16 +141,53 @@ export default (supabase: SupabaseClient, chatService: ChatService) => {
         cloud_kb_version_id 
       });
 
-      // Step 2: Retrieve context from Cloud.ru RAG API
+      // Step 2: Get RAG query mode and reranker model settings
+      const { data: queryModeSetting } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('key', 'rag_query_mode')
+        .single();
+
+      const { data: rerankerModelSetting } = await supabase
+        .from('settings')
+        .select('rag_reranker_model')
+        .eq('key', 'rag_reranker_model')
+        .single();
+
+      // value is boolean: true = use reranking, false = simple mode
+      // Handle both boolean and string values from DB
+      let useReranking = false;
+      if (queryModeSetting?.value !== undefined && queryModeSetting?.value !== null) {
+        if (typeof queryModeSetting.value === 'boolean') {
+          useReranking = queryModeSetting.value;
+        } else if (typeof queryModeSetting.value === 'string') {
+          useReranking = queryModeSetting.value.toLowerCase() === 'true';
+        }
+      }
+      
+      console.log('[RAG] Query mode setting debug', { 
+        rawValue: queryModeSetting?.value, 
+        valueType: typeof queryModeSetting?.value,
+        useReranking 
+      });
+      const rerankerModel = rerankerModelSetting?.rag_reranker_model || 'BAAI/bge-reranker-v2-m3';
+
+      // Step 3: Retrieve context from Cloud.ru RAG API
       const tokenService = CloudRuTokenService.getInstance();
-      const ragUrl = `https://${cloud_kb_root_id}.managed-rag.inference.cloud.ru/api/v1/retrieve`;
+      
+      // Use different endpoints based on reranking mode
+      const ragUrl = useReranking 
+        ? `https://${cloud_kb_root_id}.managed-rag.inference.cloud.ru/api/v1/retrieve_rerank`
+        : `https://${cloud_kb_root_id}.managed-rag.inference.cloud.ru/api/v1/retrieve`;
       
       console.log('[RAG] Requesting context from Cloud.ru', { 
         ragUrl,
-        versionId: cloud_kb_version_id
+        versionId: cloud_kb_version_id,
+        useReranking,
+        rerankerModel
       });
 
-      const ragResponse = await makeRagRequest(ragUrl, query, cloud_kb_version_id, tokenService);
+      const ragResponse = await makeRagRequest(ragUrl, query, cloud_kb_version_id, tokenService, useReranking, rerankerModel);
 
       console.log('[RAG] Context retrieved from Cloud.ru', { 
         resultsRetrieved: ragResponse.data?.results?.length || 0,

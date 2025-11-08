@@ -584,5 +584,24 @@ export default (supabase: SupabaseClient) => {
         }
     });
 
+    // RAG RERANKER MODELS
+    router.get('/rag/reranker-models', async (req, res) => {
+        try {
+            // Get available reranker models from a predefined list
+            // These are popular open-source and cloud-based reranker models
+            const rerankerModels = [
+                { id: 'BAAI/bge-reranker-v2-m3', name: 'BGE Reranker v2 M3 (Multilingual)' },
+                { id: 'BAAI/bge-reranker-v2-gemma', name: 'BGE Reranker v2 Gemma' },
+                { id: 'BAAI/bge-reranker-base', name: 'BGE Reranker Base' },
+                { id: 'BAAI/bge-reranker-large', name: 'BGE Reranker Large' },
+                { id: 'jinaai/jina-reranker-v1-base-en', name: 'Jina Reranker v1 Base (English)' },
+                { id: 'jinaai/jina-reranker-v1-turbo-en', name: 'Jina Reranker v1 Turbo (English)' }
+            ];
+            res.status(200).json(rerankerModels);
+        } catch (error: any) {
+            res.status(500).json({ error: 'Failed to fetch reranker models', details: error.message });
+        }
+    });
+
     return router;
 };

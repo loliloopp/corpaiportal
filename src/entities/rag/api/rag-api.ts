@@ -40,7 +40,12 @@ export const fetchRagObjects = async (): Promise<RagObject[]> => {
     throw new Error('Not authenticated');
   }
 
-  const response = await fetch('/api/v1/admin/rag/objects', {
+  // Use explicit localhost:3001 for development, relative paths for production
+  const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:3001/api/v1/admin/rag/objects'
+    : '/api/v1/admin/rag/objects';
+
+  const response = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
       'Content-Type': 'application/json'
@@ -64,7 +69,12 @@ export const fetchLogicalSections = async (): Promise<RagLogicalSection[]> => {
     throw new Error('Not authenticated');
   }
 
-  const response = await fetch('/api/v1/admin/rag/logical-sections', {
+  // Use explicit localhost:3001 for development, relative paths for production
+  const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:3001/api/v1/admin/rag/logical-sections'
+    : '/api/v1/admin/rag/logical-sections';
+
+  const response = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
       'Content-Type': 'application/json'
@@ -90,7 +100,12 @@ export const fetchLogicalSectionsForObject = async (objectId: string): Promise<R
   }
 
   // Get all knowledge bases for this object's buckets
-  const response = await fetch('/api/v1/admin/rag/knowledge-bases', {
+  // Use explicit localhost:3001 for development, relative paths for production
+  const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:3001/api/v1/admin/rag/knowledge-bases'
+    : '/api/v1/admin/rag/knowledge-bases';
+
+  const response = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
       'Content-Type': 'application/json'
@@ -139,7 +154,12 @@ export const sendRagQuery = async (
     return;
   }
 
-  const response = await fetch('/api/v1/chat/rag', {
+  // Use explicit localhost:3001 for development, relative paths for production
+  const url = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:3001/api/v1/chat/rag'
+    : '/api/v1/chat/rag';
+
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
