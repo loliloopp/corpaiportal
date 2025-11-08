@@ -92,3 +92,6 @@ dist-ssr
 
 # Local environment variables for proxy server
 /proxy/.env
+
+# Supabase production schema
+supabase/schemas/prod.sql
