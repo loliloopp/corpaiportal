@@ -14,7 +14,8 @@ const ragRequestSchema = z.object({
   messages: z.array(z.object({
     role: z.enum(['system', 'user', 'assistant']),
     content: z.string()
-  })).min(1, 'At least one message is required')
+  })).min(1, 'At least one message is required'),
+  conversation_id: z.string().uuid().optional().nullable()
 });
 
 type RagRequestPayload = z.infer<typeof ragRequestSchema>;
@@ -104,9 +105,9 @@ export default (supabase: SupabaseClient, chatService: ChatService) => {
         });
       }
 
-      const { object_id, logical_section_id, query, model, messages } = result.data;
+      const { object_id, logical_section_id, query, model, messages, conversation_id } = result.data;
 
-      console.log('[RAG] Request received', { userId: req.user.id, object_id, logical_section_id, model });
+      console.log('[RAG] Request received', { userId: req.user.id, object_id, logical_section_id, model, conversation_id });
 
       // Step 1: Find the latest version of knowledge base for given object and logical section
       const { data: kbData, error: kbError } = await supabase
@@ -243,7 +244,7 @@ ${contextText || 'Контекст не найден.'}
       const chatPayload = {
         model,
         messages: enhancedMessages,
-        conversationId: null, // RAG chats don't save to conversations for now
+        conversationId: conversation_id || undefined, // Use provided conversation_id or create new
         temperature: undefined,
         top_p: undefined
       };

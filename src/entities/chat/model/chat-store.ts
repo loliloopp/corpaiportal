@@ -468,7 +468,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     
     // RAG message sending function
     sendRagMessage: async (content: string) => {
-      const { selectedModel, messages } = get();
+      const { selectedModel, messages, activeConversation } = get();
       const { user } = useAuthStore.getState();
       const { selectedRagObject, selectedLogicalSection } = useRagStore.getState();
 
@@ -476,9 +476,12 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       set({ loading: true });
 
+      // Use existing conversation_id if in an active conversation, otherwise null (will be created on server)
+      const conversationId = activeConversation || null;
+
       const optimisticUserMessage: Message = {
         id: nanoid(),
-        conversation_id: null, // Will be set after response
+        conversation_id: conversationId,
         user_id: user.id,
         role: 'user' as const,
         content: content,
@@ -489,7 +492,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       const optimisticAssistantId = nanoid();
       const optimisticAssistantMessage: Message = {
         id: optimisticAssistantId,
-        conversation_id: null, // Will be set after response
+        conversation_id: conversationId,
         user_id: user.id,
         role: 'assistant' as const,
         content: '',
@@ -515,6 +518,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           content,
           selectedModel,
           conversationHistory,
+          conversationId,
           // onChunk
           (chunk: string) => {
             set((state) => {

@@ -80,6 +80,7 @@ async function main() {
     app.use('/api/v1', settingsRoutes(supabase));
     
     // Admin routes (require admin role) - NO rate limiting
+    console.log("Mounting admin routes at /api/v1/admin");
     app.use('/api/v1/admin', adminRoutes(supabase));
 
     // Chat routes (add specific limiter)

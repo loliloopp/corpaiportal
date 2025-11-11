@@ -227,13 +227,13 @@ export const RagManagementTab: React.FC = () => {
 
   // Handlers for Knowledge Bases
   const handleKbSubmit = async (values: any) => {
-    if (editingItem) {
-      updateMutation.mutate({
-        endpoint: `/api/v1/admin/rag/knowledge-bases/${editingItem.id}`,
-        data: values
-      });
-    } else {
-      try {
+    try {
+      if (editingItem) {
+        updateMutation.mutate({
+          endpoint: `/api/v1/admin/rag/knowledge-bases/${editingItem.id}`,
+          data: values
+        });
+      } else {
         const { data: { session } } = await supabase.auth.getSession();
         const response = await fetch('/api/v1/admin/rag/knowledge-bases', {
           headers: { 'Authorization': `Bearer ${session?.access_token}` }
@@ -246,10 +246,9 @@ export const RagManagementTab: React.FC = () => {
           endpoint: '/api/v1/admin/rag/knowledge-bases',
           data: { ...values, version_number: nextVersion }
         });
-      } catch (error) {
-        console.error('Error calculating version number:', error);
-        message.error('Ошибка при расчете номера версии');
       }
+    } catch (error) {
+      message.error('Ошибка при расчете номера версии');
     }
   };
 

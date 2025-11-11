@@ -11,7 +11,14 @@ export default defineConfig({
     },
   },
   server: {
-    // Note: API proxy handled in apiClient.ts
-    // Uses explicit http://localhost:3001 for localhost, relative paths for production
+    // Proxy for local development only
+    // On localhost, route /api/v1 to http://localhost:3001
+    proxy: {
+      '/api/v1': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        rewrite: (path) => path,
+      },
+    },
   },
 })

@@ -143,6 +143,7 @@ export const sendRagQuery = async (
   query: string,
   model: string,
   messages: Array<{ role: string; content: string }>,
+  conversationId: string | null,
   onChunk: (content: string) => void,
   onComplete: (conversationId: string) => void,
   onError: (error: string) => void
@@ -170,7 +171,8 @@ export const sendRagQuery = async (
       logical_section_id: logicalSectionId,
       query,
       model,
-      messages
+      messages,
+      conversation_id: conversationId
     })
   });
 
